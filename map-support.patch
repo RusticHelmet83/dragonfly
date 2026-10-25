@@ -1,0 +1,303 @@
+diff --git a/server/block/hash.go b/server/block/hash.go
+index 17608d7..1ddcb68 100644
+--- a/server/block/hash.go
++++ b/server/block/hash.go
+@@ -707,7 +707,7 @@ func (i IronOre) Hash() (uint64, uint64) {
+ }
+ 
+ func (i ItemFrame) Hash() (uint64, uint64) {
+-	return hashItemFrame, uint64(i.Facing) | uint64(boolByte(i.Glowing))<<3
++	return hashItemFrame, uint64(i.Facing) | uint64(boolByte(i.Glowing))<<3 | uint64(boolByte(i.Map))<<4
+ }
+ 
+ func (Jukebox) Hash() (uint64, uint64) {
+diff --git a/server/block/item_frame.go b/server/block/item_frame.go
+index 21dc726..9726deb 100644
+--- a/server/block/item_frame.go
++++ b/server/block/item_frame.go
+@@ -28,17 +28,23 @@ type ItemFrame struct {
+ 	DropChance float64
+ 	// Glowing makes the frame the glowing variant.
+ 	Glowing bool
++	// Map is true if the frame holds a filled map. It selects the map variant of the frame block state and must
++	// be set to true whenever Item is an item.FilledMap.
++	Map bool
+ }
+ 
+ // Activate ...
+ func (i ItemFrame) Activate(pos cube.Pos, _ cube.Face, tx *world.Tx, u item.User, ctx *item.UseContext) bool {
+ 	if !i.Item.Empty() {
+-		// TODO: Item frames with maps can only be rotated four times.
++		if i.Map {
++			// Frames holding a map are locked: they cannot be rotated.
++			return true
++		}
+ 		i.Rotations = (i.Rotations + 1) % 8
+ 		tx.PlaySound(pos.Vec3Centre(), sound.ItemFrameRotate{})
+ 	} else if held, _ := u.HeldItems(); !held.Empty() {
+ 		i.Item = held.Grow(-held.Count() + 1)
+-		// TODO: When maps are implemented, check the item is a map, and if so, display the large version of the frame.
++		_, i.Map = i.Item.Item().(item.FilledMap)
+ 		ctx.SubtractFromCount(1)
+ 		tx.PlaySound(pos.Vec3Centre(), sound.ItemAdd{})
+ 	} else {
+@@ -51,7 +57,8 @@ func (i ItemFrame) Activate(pos cube.Pos, _ cube.Face, tx *world.Tx, u item.User
+ 
+ // Punch ...
+ func (i ItemFrame) Punch(pos cube.Pos, _ cube.Face, tx *world.Tx, u item.User) {
+-	if i.Item.Empty() {
++	if i.Item.Empty() || i.Map {
++		// Frames holding a map are locked: the map cannot be punched out.
+ 		return
+ 	}
+ 
+@@ -109,7 +116,7 @@ func (i ItemFrame) EncodeBlock() (name string, properties map[string]any) {
+ 	}
+ 	return name, map[string]any{
+ 		"facing_direction":     int32(i.Facing.Opposite()),
+-		"item_frame_map_bit":   uint8(0), // TODO: When maps are added, set this to true if the item is a map.
++		"item_frame_map_bit":   boolByte(i.Map),
+ 		"item_frame_photo_bit": uint8(0), // Only implemented in Education Edition.
+ 	}
+ }
+@@ -119,6 +126,7 @@ func (i ItemFrame) DecodeNBT(data map[string]any) any {
+ 	i.DropChance = float64(nbtconv.Float32(data, "ItemDropChance"))
+ 	i.Rotations = int(nbtconv.Uint8(data, "ItemRotation"))
+ 	i.Item = item.MapNBT(data, "Item")
++	_, i.Map = i.Item.Item().(item.FilledMap)
+ 	return i
+ }
+ 
+@@ -164,6 +172,8 @@ func allItemFrames() (frames []world.Block) {
+ 	for _, f := range cube.Faces() {
+ 		frames = append(frames, ItemFrame{Facing: f, Glowing: true})
+ 		frames = append(frames, ItemFrame{Facing: f, Glowing: false})
++		frames = append(frames, ItemFrame{Facing: f, Glowing: true, Map: true})
++		frames = append(frames, ItemFrame{Facing: f, Glowing: false, Map: true})
+ 	}
+ 	return
+ }
+diff --git a/server/block/map_frame_verify_test.go b/server/block/map_frame_verify_test.go
+new file mode 100644
+index 0000000..4e09eae
+--- /dev/null
++++ b/server/block/map_frame_verify_test.go
+@@ -0,0 +1,120 @@
++package block_test
++
++import (
++	"bytes"
++	"context"
++	"image/color"
++	"testing"
++
++	"github.com/df-mc/dragonfly/server/block"
++	"github.com/df-mc/dragonfly/server/block/cube"
++	"github.com/df-mc/dragonfly/server/entity"
++	"github.com/df-mc/dragonfly/server/item"
++	"github.com/df-mc/dragonfly/server/world"
++	"github.com/sandertv/gophertunnel/minecraft/nbt"
++	"github.com/sandertv/gophertunnel/minecraft/protocol"
++	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
++)
++
++func mapFrame(id int64) block.ItemFrame {
++	return block.ItemFrame{Facing: cube.FaceNorth, Map: true, Item: item.NewStack(item.FilledMap{ID: id}, 1)}
++}
++
++func TestMapFrameRuntimeIDsDiffer(t *testing.T) {
++	world.DefaultBlockRegistry.Finalize()
++	plain := world.BlockRuntimeID(block.ItemFrame{Facing: cube.FaceNorth})
++	withMap := world.BlockRuntimeID(mapFrame(900001))
++	if plain == withMap {
++		t.Fatalf("map frame and plain frame share runtime id %d", plain)
++	}
++	b, ok := world.BlockByRuntimeID(withMap)
++	if !ok {
++		t.Fatal("runtime id not found")
++	}
++	_, props := b.EncodeBlock()
++	t.Logf("map frame state properties: %v", props)
++	if props["item_frame_map_bit"] != uint8(1) {
++		t.Fatalf("map bit = %v, want 1", props["item_frame_map_bit"])
++	}
++	pb, _ := world.BlockByRuntimeID(plain)
++	_, props = pb.EncodeBlock()
++	if props["item_frame_map_bit"] != uint8(0) {
++		t.Fatalf("plain map bit = %v, want 0", props["item_frame_map_bit"])
++	}
++	// every face/glow combination must resolve.
++	for _, f := range cube.Faces() {
++		for _, g := range []bool{true, false} {
++			world.BlockRuntimeID(block.ItemFrame{Facing: f, Glowing: g, Map: true})
++			world.BlockRuntimeID(block.ItemFrame{Facing: f, Glowing: g})
++		}
++	}
++}
++
++func TestMapFrameInWorldAndNBTDiskRoundTrip(t *testing.T) {
++	w := world.Config{Synchronous: true, Entities: entity.DefaultRegistry}.New()
++	defer w.Close()
++	pos := cube.Pos{0, 1, 0}
++	w.Do(func(tx *world.Tx) {
++		tx.SetBlock(cube.Pos{0, 1, 1}, block.Stone{}, nil)
++		tx.SetBlock(pos, mapFrame(900042), nil)
++	})
++	b, err := world.Call(context.Background(), w, func(tx *world.Tx) (world.Block, error) { return tx.Block(pos), nil })
++	if err != nil {
++		t.Fatal(err)
++	}
++	f, ok := b.(block.ItemFrame)
++	if !ok {
++		t.Fatalf("got %T", b)
++	}
++	if !f.Map {
++		t.Fatal("Map flag lost when reading frame back from world")
++	}
++
++	// Disk encoding through real NBT bytes, then decode as chunk loading does.
++	data := mapFrame(900042).EncodeNBT()
++	raw, err := nbt.MarshalEncoding(data, nbt.LittleEndian)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var back map[string]any
++	if err := nbt.UnmarshalEncoding(raw, &back, nbt.LittleEndian); err != nil {
++		t.Fatal(err)
++	}
++	got := (block.ItemFrame{}).DecodeNBT(back).(block.ItemFrame)
++	m, ok := got.Item.Item().(item.FilledMap)
++	if !ok || m.ID != 900042 || !got.Map {
++		t.Fatalf("decoded frame wrong: %#v (item %#v)", got, got.Item.Item())
++	}
++
++	// Network encoding of the held item stack (what the client sees in the item tag).
++	net := item.WriteNBT(item.NewStack(item.FilledMap{ID: 900042}, 1), false)
++	if v, ok := net["map_uuid"].(int64); !ok || v != 900042 {
++		t.Fatalf("network tag map_uuid = %#v", net["map_uuid"])
++	}
++}
++
++func TestMapPacketRoundTrip(t *testing.T) {
++	px := make([]color.RGBA, 128*128)
++	for i := range px {
++		px[i] = color.RGBA{R: uint8(i), G: 7, B: 9, A: 255}
++	}
++	pk := &packet.ClientBoundMapItemData{
++		MapID:          900042,
++		Scale:          protocol.Option[byte](0),
++		MapsIncludedIn: protocol.Option([]int64{900042}),
++		Width:          protocol.Option[int32](128),
++		Height:         protocol.Option[int32](128),
++		XOffset:        protocol.Option[int32](0),
++		YOffset:        protocol.Option[int32](0),
++		Pixels:         protocol.Option(px),
++	}
++	buf := new(bytes.Buffer)
++	pk.Marshal(protocol.NewWriter(buf, 0))
++	t.Logf("encoded packet size: %d bytes", buf.Len())
++	var out packet.ClientBoundMapItemData
++	out.Marshal(protocol.NewReader(buf, 0, false))
++	p, ok := out.Pixels.Value()
++	if !ok || len(p) != 128*128 || p[5] != px[5] || p[16383] != px[16383] || out.MapID != 900042 {
++		t.Fatalf("round trip mismatch (ok=%v len=%d id=%d)", ok, len(p), out.MapID)
++	}
++}
+diff --git a/server/item/filled_map.go b/server/item/filled_map.go
+new file mode 100644
+index 0000000..ef828cd
+--- /dev/null
++++ b/server/item/filled_map.go
+@@ -0,0 +1,26 @@
++package item
++
++// FilledMap is a map item. The client looks up the pixels of a map by its ID; the server supplies them with a
++// ClientBoundMapItemData packet.
++type FilledMap struct {
++	// ID is the unique ID of the map, stored in the item's NBT as map_uuid.
++	ID int64
++}
++
++// EncodeItem ...
++func (FilledMap) EncodeItem() (name string, meta int16) {
++	return "minecraft:filled_map", 0
++}
++
++// EncodeNBT ...
++func (m FilledMap) EncodeNBT() map[string]any {
++	return map[string]any{"map_uuid": m.ID}
++}
++
++// DecodeNBT ...
++func (m FilledMap) DecodeNBT(data map[string]any) any {
++	if v, ok := data["map_uuid"].(int64); ok {
++		m.ID = v
++	}
++	return m
++}
+diff --git a/server/item/register.go b/server/item/register.go
+index 07b7b07..f3e53b6 100644
+--- a/server/item/register.go
++++ b/server/item/register.go
+@@ -57,6 +57,7 @@ func init() {
+ 	world.RegisterItem(EnderPearl{})
+ 	world.RegisterItem(Feather{})
+ 	world.RegisterItem(FermentedSpiderEye{})
++	world.RegisterItem(FilledMap{})
+ 	world.RegisterItem(FireCharge{})
+ 	world.RegisterItem(Firework{})
+ 	world.RegisterItem(FlintAndSteel{})
+diff --git a/server/player/player.go b/server/player/player.go
+index 3057254..4819aa6 100644
+--- a/server/player/player.go
++++ b/server/player/player.go
+@@ -3,6 +3,7 @@ package player
+ import (
+ 	"errors"
+ 	"fmt"
++	"image/color"
+ 	"math"
+ 	"math/rand/v2"
+ 	"net"
+@@ -300,6 +301,12 @@ func (p *Player) SendToast(title, message string) {
+ 	p.session().SendToast(title, message)
+ }
+ 
++// SendMapData sends the pixels of the map with the ID passed to the player. pixels must hold exactly 128*128
++// colours, row by row.
++func (p *Player) SendMapData(id int64, pixels []color.RGBA) {
++	p.session().SendMapData(id, pixels)
++}
++
+ // ResetFallDistance resets the player's fall distance.
+ func (p *Player) ResetFallDistance() {
+ 	p.fallDistance = 0
+diff --git a/server/session/map.go b/server/session/map.go
+new file mode 100644
+index 0000000..17fc08a
+--- /dev/null
++++ b/server/session/map.go
+@@ -0,0 +1,23 @@
++package session
++
++import (
++	"image/color"
++
++	"github.com/sandertv/gophertunnel/minecraft/protocol"
++	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
++)
++
++// SendMapData sends the pixels of the map with the ID passed to the client. pixels must hold exactly 128*128
++// colours, row by row, and every colour should have its alpha set to 255.
++func (s *Session) SendMapData(id int64, pixels []color.RGBA) {
++	s.writePacket(&packet.ClientBoundMapItemData{
++		MapID:          id,
++		Scale:          protocol.Option[byte](0),
++		MapsIncludedIn: protocol.Option([]int64{id}),
++		Width:          protocol.Option[int32](128),
++		Height:         protocol.Option[int32](128),
++		XOffset:        protocol.Option[int32](0),
++		YOffset:        protocol.Option[int32](0),
++		Pixels:         protocol.Option(pixels),
++	})
++}
