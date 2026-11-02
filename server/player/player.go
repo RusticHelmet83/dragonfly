@@ -691,6 +691,12 @@ func (p *Player) blocksUnder() (low, high cube.Pos) {
 // and must not block or call back into the world.
 var TotemPopped func(p *Player, src world.DamageSource)
 
+// OnItemDropped, if non-nil, is called inside dropItems() each time a death
+// drop item entity is added to the world. The handle is the newly-spawned item
+// entity. The callback runs inside the player's world transaction and must not
+// block or call back into the world.
+var OnItemDropped func(p *Player, handle *world.EntityHandle)
+
 // Hurt hurts the player for a given amount of damage. The source passed
 // represents the cause of the damage, for example entity.AttackDamageSource if
 // the player is attacked by another entity. If the final damage exceeds the
@@ -1046,7 +1052,11 @@ func (p *Player) dropItems() {
 			continue
 		}
 		opts := world.EntitySpawnOpts{Position: pos, Velocity: mgl64.Vec3{rand.Float64()*0.2 - 0.1, 0.2, rand.Float64()*0.2 - 0.1}}
-		p.tx.AddEntity(entity.NewItem(opts, it))
+		h := entity.NewItem(opts, it)
+		p.tx.AddEntity(h)
+		if OnItemDropped != nil {
+			OnItemDropped(p, h)
+		}
 	}
 }
 
