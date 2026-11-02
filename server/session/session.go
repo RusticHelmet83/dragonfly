@@ -85,9 +85,6 @@ type Session struct {
 	customContainerClose           atomic.Pointer[func()]
 	moving                         bool
 
-	// tapLogMode is temporary debug state for taplog.go.
-	tapLogMode atomic.Uint64
-
 	lastChunkPos world.ChunkPos
 
 	recipes map[uint32]recipe.Recipe
@@ -581,7 +578,6 @@ func (s *Session) ChunkRadius() int32 {
 // handlePacket handles an incoming packet, processing it accordingly. If the packet had invalid data or was
 // otherwise not valid in its context, an error is returned.
 func (s *Session) handlePacket(pk packet.Packet, tx *world.Tx, c Controllable) (err error) {
-	tapLog(s, pk, c) // temporary debug logging, see taplog.go
 	handler, ok := s.handlers[pk.ID()]
 	if !ok {
 		s.conf.Log.Debug("unhandled packet", "packet", fmt.Sprintf("%T", pk), "data", fmt.Sprintf("%+v", pk)[1:])
