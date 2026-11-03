@@ -120,6 +120,9 @@ type playerData struct {
 	// It satisfies the world.FakeSpectator interface so projectiles and melee
 	// attacks pass straight through without needing to touch GameMode.
 	fakeSpectating atomic.Bool
+
+	// autoSprint is true if the player has Auto-Sprint enabled. See SetAutoSprint.
+	autoSprint atomic.Bool
 }
 
 // Player is an implementation of a player entity. It has methods that implement the behaviour that players
@@ -1189,6 +1192,18 @@ func (p *Player) StartSprinting() {
 // Sprinting checks if the player is currently sprinting.
 func (p *Player) Sprinting() bool {
 	return p.sprinting
+}
+
+// SetAutoSprint enables or disables Auto-Sprint for the player. With Auto-Sprint enabled, the player keeps
+// sprinting for as long as they are moving forward, without having to hold the sprint key (or double-tap
+// forward on touch). The input handling that implements this lives in the session package.
+func (p *Player) SetAutoSprint(enabled bool) {
+	p.autoSprint.Store(enabled)
+}
+
+// AutoSprint reports whether Auto-Sprint is enabled for the player. See SetAutoSprint.
+func (p *Player) AutoSprint() bool {
+	return p.autoSprint.Load()
 }
 
 // StopSprinting makes a player stop sprinting, setting back the speed of the player to its original value.

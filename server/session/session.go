@@ -84,6 +84,11 @@ type Session struct {
 	customTime                     atomic.Bool
 	customContainerClose           atomic.Pointer[func()]
 	moving                         bool
+	// autoSprinting is true while the session is keeping the controllable sprinting for Auto-Sprint.
+	// ignoreStopSprint makes handleInputFlags skip the client's stop sprint flag for the current packet.
+	// Both are only touched while handling PlayerAuthInput.
+	autoSprinting    bool
+	ignoreStopSprint bool
 
 	lastChunkPos world.ChunkPos
 

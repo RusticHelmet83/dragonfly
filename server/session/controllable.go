@@ -90,6 +90,9 @@ type Controllable interface {
 	StartSprinting()
 	Sprinting() bool
 	StopSprinting()
+	// AutoSprint reports whether the Controllable has Auto-Sprint enabled, in which case the session keeps
+	// it sprinting while it moves forward.
+	AutoSprint() bool
 	StartSwimming()
 	Swimming() bool
 	StopSwimming()

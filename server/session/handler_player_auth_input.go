@@ -97,7 +97,13 @@ func (h PlayerAuthInputHandler) handleActions(pk *packet.PlayerAuthInput, s *Ses
 			return err
 		}
 	}
+	// Auto-Sprint: while it is active, a stop sprint flag from the client is not applied (it only means the sprint
+	// key was released or the finger moved on the d-pad). The sprint is re-asserted to the client afterwards.
+	autoSprint := h.autoSprintActive(pk, s, c)
+	s.ignoreStopSprint = autoSprint
 	h.handleInputFlags(pk.InputData, s, c)
+	s.ignoreStopSprint = false
+	h.applyAutoSprint(pk, s, c, autoSprint)
 
 	if pk.InputData.Load(packet.InputFlagPerformItemStackRequest) {
 		request, ok := pk.ItemStackRequest.Value()
@@ -123,7 +129,7 @@ func (h PlayerAuthInputHandler) handleInputFlags(flags protocol.InputFlags, s *S
 	if flags.Load(packet.InputFlagStartSprinting) {
 		c.StartSprinting()
 	}
-	if flags.Load(packet.InputFlagStopSprinting) {
+	if flags.Load(packet.InputFlagStopSprinting) && !s.ignoreStopSprint {
 		c.StopSprinting()
 	}
 	if sneaking := flags.Load(packet.InputFlagSneaking); sneaking != c.Sneaking() {
@@ -174,6 +180,53 @@ func (h PlayerAuthInputHandler) handleInputFlags(flags protocol.InputFlags, s *S
 	}
 	if flags.Load(packet.InputFlagStopFlying) {
 		c.StopFlying()
+	}
+}
+
+// autoSprintMinForward is the minimum forward component of the move vector for Auto-Sprint to start sprinting. It
+// is below 1/sqrt(2) so that diagonal keyboard/d-pad input (forward+strafe) still counts, while stick drift and
+// light pushes on an analogue stick do not.
+const autoSprintMinForward = 0.5
+
+// autoSprintActive reports whether the controllable should currently be kept sprinting by Auto-Sprint. This is the
+// case while Auto-Sprint is enabled and the controllable is moving forward. Once it is sprinting this way, it
+// also stays active while only strafing (forward input zero, strafe input present), so that sliding a finger from
+// the forward button to the left or right button on a touch d-pad does not drop the sprint. Moving backwards,
+// standing still, or anything that prevents sprinting (sneaking, swimming, gliding, flying, crawling, using an
+// item, being dead) ends it.
+func (h PlayerAuthInputHandler) autoSprintActive(pk *packet.PlayerAuthInput, s *Session, c Controllable) bool {
+	if !c.AutoSprint() {
+		return false
+	}
+	if pk.InputData.Load(packet.InputFlagSneaking) || c.Swimming() || c.Gliding() || c.Flying() || c.Crawling() || c.Dead() {
+		return false
+	}
+	if u, ok := c.(interface{ UsingItem() bool }); ok && u.UsingItem() {
+		return false
+	}
+	// The X axis of the move vector is the strafe input and the Y axis the forward input.
+	strafe, forward := pk.MoveVector[0], pk.MoveVector[1]
+	return forward >= autoSprintMinForward || (s.autoSprinting && forward >= 0 && strafe != 0)
+}
+
+// applyAutoSprint applies the result of autoSprintActive after the input flags have been handled. While active, it
+// starts the sprint if the controllable is not sprinting, and re-sends the sprint state to the client if the client
+// reported that it stopped sprinting, as the client otherwise keeps walking. When Auto-Sprint just ended (the
+// controllable stopped moving forward or it was disabled) while the sprint is still on, the sprint is stopped.
+func (h PlayerAuthInputHandler) applyAutoSprint(pk *packet.PlayerAuthInput, s *Session, c Controllable, active bool) {
+	was := s.autoSprinting
+	s.autoSprinting = active
+
+	if active {
+		if !c.Sprinting() {
+			c.StartSprinting()
+		} else if pk.InputData.Load(packet.InputFlagStopSprinting) {
+			s.ViewEntityState(c)
+		}
+		return
+	}
+	if was && c.Sprinting() && !pk.InputData.Load(packet.InputFlagStartSprinting) {
+		c.StopSprinting()
 	}
 }
 
