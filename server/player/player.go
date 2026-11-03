@@ -857,18 +857,9 @@ func (p *Player) knockBack(src mgl64.Vec3, force, height float64) {
 	velocity := p.Position().Sub(src)
 	velocity[1] = 0
 
-	existing := p.Velocity()
-	var motionX, motionZ float64
-	if !p.OnGround() || existing.Len() > 0 {
-		motionX = existing.X() / 2
-		motionZ = existing.Z() / 2
-	}
-
 	if velocity.Len() != 0 {
 		velocity = velocity.Normalize().Mul(force)
 	}
-	velocity[0] += motionX
-	velocity[2] += motionZ
 	velocity[1] = height
 
 	p.SetVelocity(velocity.Mul(1 - p.Armour().KnockBackResistance()))
@@ -2535,8 +2526,8 @@ func (p *Player) Velocity() mgl64.Vec3 {
 // SetVelocity updates the player's velocity. If there is an attached session, this will just send
 // the velocity to the player session for the player to update.
 func (p *Player) SetVelocity(velocity mgl64.Vec3) {
-	p.data.Vel = velocity
 	if p.session() == session.Nop {
+		p.data.Vel = velocity
 		return
 	}
 	for _, v := range p.viewers() {
