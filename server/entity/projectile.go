@@ -111,6 +111,12 @@ type ProjectileBehaviourConfig struct {
 	// passes through PiercingLevel entities and damages PiercingLevel+1 in
 	// total. A value of 0 means no piercing.
 	PiercingLevel int
+	// Collidable specifies if the projectile may collide with other Collidable
+	// projectiles of a different entity type (for example an ender pearl and a
+	// wind charge). Such projectiles are not damageable and are normally
+	// passed through by every other projectile. If set, the Hit function is
+	// called with a trace.EntityResult whose Entity is the other projectile.
+	Collidable bool
 }
 
 func (conf ProjectileBehaviourConfig) Apply(data *world.EntityData) {
@@ -231,10 +237,11 @@ func (lt *ProjectileBehaviour) Tick(e *Ent, tx *world.Tx) *Movement {
 
 	switch r := result.(type) {
 	case trace.EntityResult:
-		if lt.conf.Damage >= 0 {
+		damageable := DamageableEntity(r.Entity())
+		if lt.conf.Damage >= 0 && damageable {
 			lt.hitEntity(r.Entity(), e, vel)
 		}
-		if DamageableEntity(r.Entity()) {
+		if damageable || lt.collidesWith(e, r.Entity()) {
 			lt.collidedEntities = append(lt.collidedEntities, r.Entity().H())
 		}
 	case trace.BlockResult:
@@ -399,6 +406,30 @@ func (lt *ProjectileBehaviour) tickMovement(e *Ent, tx *world.Tx) (*Movement, tr
 	return &Movement{v: viewers, e: e, pos: end, vel: vel, dpos: end.Sub(pos), dvel: vel.Sub(velBefore), rot: rot}, hit
 }
 
+// TriggerHit calls the Hit function of the ProjectileBehaviourConfig, if it
+// was set, as if the projectile e had hit the target passed. It is used to
+// resolve collisions between two projectiles, where one of them is consumed by
+// the other before it could hit anything itself.
+func (lt *ProjectileBehaviour) TriggerHit(e *Ent, tx *world.Tx, target trace.Result) {
+	if lt.conf.Hit != nil {
+		lt.conf.Hit(e, tx, target)
+	}
+}
+
+// collidesWith reports if the projectile e may collide with other, which is
+// the case if both are Collidable projectiles of a different entity type.
+func (lt *ProjectileBehaviour) collidesWith(e *Ent, other world.Entity) bool {
+	if !lt.conf.Collidable || other.H().Type() == e.H().Type() || other.H().Closed() {
+		return false
+	}
+	otherEnt, ok := other.(*Ent)
+	if !ok {
+		return false
+	}
+	b, ok := otherEnt.Behaviour().(*ProjectileBehaviour)
+	return ok && b.conf.Collidable && !b.collided
+}
+
 // ignores returns a function to ignore entities in trace.Perform that are
 // either a spectator, a fake spectator (world.FakeSpectator), not damageable,
 // the entity itself, its owner in the first 5 ticks, or an entity it already
@@ -413,7 +444,7 @@ func (lt *ProjectileBehaviour) ignores(e *Ent) trace.EntityFilter {
 					spectator = true
 				}
 				itself := e.H() == other.H()
-				damageable := DamageableEntity(other)
+				damageable := DamageableEntity(other) || lt.collidesWith(e, other)
 				owner := e.data.Age < time.Second/4 && lt.conf.Owner == other.H()
 				collidedEntity := slices.Contains(lt.collidedEntities, other.H())
 				if spectator || itself || !damageable || owner || collidedEntity {

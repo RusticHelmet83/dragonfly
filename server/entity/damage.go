@@ -13,6 +13,10 @@ type (
 		// Attacker holds the attacking entity. The entity may be a player or
 		// any other entity.
 		Attacker world.Entity
+		// ArmourPenetration is the fraction (0-1) of the armour points of the
+		// victim that is ignored when the damage is reduced by armour. It is
+		// set by the Breach enchantment of the mace.
+		ArmourPenetration float64
 	}
 
 	// VoidDamageSource is used for damage caused by an entity being in the
@@ -66,6 +70,9 @@ func (LightningDamageSource) ReducedByArmour() bool       { return true }
 func (LightningDamageSource) ReducedByResistance() bool   { return true }
 func (LightningDamageSource) Fire() bool                  { return false }
 func (LightningDamageSource) IgnoreTotem() bool           { return false }
+func (a AttackDamageSource) ArmourPenetrationFraction() float64 {
+	return a.ArmourPenetration
+}
 func (AttackDamageSource) ReducedByArmour() bool          { return true }
 func (AttackDamageSource) ReducedByResistance() bool      { return true }
 func (AttackDamageSource) Fire() bool                     { return false }

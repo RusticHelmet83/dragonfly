@@ -22,7 +22,17 @@ var enderPearlConf = ProjectileBehaviourConfig{
 	Drag:     0.01,
 	Particle: particle.EndermanTeleport{},
 	Sound:    sound.Teleport{},
-	Hit:      teleport,
+	Hit:      enderPearlHit,
+	// Collidable lets the pearl and wind charges collide with each other.
+	Collidable: true,
+}
+
+// enderPearlHit is called when an ender pearl hits a block or an entity. If the
+// pearl hits a wind charge, the wind charge bursts at the point of collision
+// and is consumed, after which the pearl still teleports its owner.
+func enderPearlHit(e *Ent, tx *world.Tx, target trace.Result) {
+	HandleWindChargeCollision(tx, target)
+	teleport(e, tx, target)
 }
 
 // teleporter represents a living entity that can teleport.

@@ -73,6 +73,14 @@ type playerData struct {
 	fireTicks    int64
 	fallDistance float64
 
+	// fallNegate, fallNegateY, fallNegateAir and fallNegateUntil implement the
+	// negation of fall damage after a wind charge burst. See
+	// NegateFallDamageAbove.
+	fallNegate      bool
+	fallNegateAir   bool
+	fallNegateY     float64
+	fallNegateUntil time.Time
+
 	breathing         bool
 	airSupplyTicks    int
 	maxAirSupplyTicks int
@@ -308,6 +316,16 @@ func (p *Player) SendToast(title, message string) {
 // colours, row by row.
 func (p *Player) SendMapData(id int64, pixels []color.RGBA) {
 	p.session().SendMapData(id, pixels)
+}
+
+// NegateFallDamageAbove negates the fall damage the player takes for the part
+// of its next fall that happens above the height y. This is used by wind charge
+// bursts: the fall distance of the player keeps accumulating, so a mace smash is
+// still possible, but landing at or above y deals no fall damage. The negation
+// ends once the player lands, or after 15 seconds.
+func (p *Player) NegateFallDamageAbove(y float64) {
+	p.fallNegate, p.fallNegateAir, p.fallNegateY = true, false, y
+	p.fallNegateUntil = time.Now().Add(15 * time.Second)
 }
 
 // ResetFallDistance resets the player's fall distance.
@@ -626,9 +644,21 @@ func (p *Player) Heal(health float64, source world.HealingSource) float64 {
 
 // updateFallState is called to update the entities falling state.
 func (p *Player) updateFallState(distanceThisTick float64) {
+	if p.fallNegate && time.Now().After(p.fallNegateUntil) {
+		p.fallNegate, p.fallNegateAir = false, false
+	}
+	if p.fallNegate && !p.OnGround() {
+		p.fallNegateAir = true
+	}
 	switch {
 	case p.OnGround():
 		p.fallDistance -= distanceThisTick
+		if p.fallNegate && p.fallNegateAir {
+			// Fall damage is only dealt for the part of the fall that happened
+			// below the height of the burst.
+			p.fallNegate, p.fallNegateAir = false, false
+			p.fallDistance = max(0, min(p.fallDistance, p.fallNegateY-p.Position()[1]))
+		}
 		if p.fallDistance > 3 {
 			p.fall(p.fallDistance)
 		}
@@ -1974,6 +2004,12 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	)
 
 	i, _ := p.HeldItems()
+	_, isMace := i.Item().(item.Mace)
+	smash := isMace && isLiving && p.maceSmashing()
+	if smash {
+		// A smash attack always counts as a critical hit, even while sprinting.
+		critical = !p.Flying() && !blind
+	}
 	if k, ok := i.Enchantment(enchantment.Knockback); ok {
 		inc := enchantment.Knockback.Force(k.Level())
 		force += inc
@@ -2011,11 +2047,23 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if s, ok := i.Enchantment(enchantment.Sharpness); ok {
 		dmg += enchantment.Sharpness.Addend(s.Level())
 	}
+	fallDistance := p.fallDistance
+	if smash {
+		perBlock := 0.0
+		if d, ok := i.Enchantment(enchantment.Density); ok {
+			perBlock = enchantment.Density.PerBlockAddend(d.Level())
+		}
+		dmg += item.MaceSmashBonus(fallDistance, perBlock)
+	}
 	if critical {
 		dmg *= 1.5
 	}
 
-	_, vulnerable := living.Hurt(dmg, entity.AttackDamageSource{Attacker: p})
+	src := entity.AttackDamageSource{Attacker: p}
+	if b, ok := i.Enchantment(enchantment.Breach); ok && isMace {
+		src.ArmourPenetration = enchantment.Breach.ArmourPenetration(b.Level())
+	}
+	_, vulnerable := living.Hurt(dmg, src)
 	i, left := p.HeldItems()
 
 	if durable, ok := i.Item().(item.Durable); ok {
@@ -2035,12 +2083,81 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 
 	living.KnockBack(p.Position(), force, height)
 
+	if smash {
+		p.smashEffects(e, force, height, fallDistance, i)
+	}
+
 	if f, ok := i.Enchantment(enchantment.FireAspect); ok {
 		if flammable, ok := living.(entity.Flammable); ok {
 			flammable.SetOnFire(enchantment.FireAspect.Duration(f.Level()))
 		}
 	}
 	return true
+}
+
+// maceSmashing checks if the player is currently falling far enough for an
+// attack with a mace to be a smash attack.
+func (p *Player) maceSmashing() bool {
+	_, slowFalling := p.Effect(effect.SlowFalling)
+	return p.fallDistance > item.MaceSmashMinFall && !p.OnGround() && !p.Flying() && !slowFalling
+}
+
+// MaceWindBurstLaunchScale multiplies the launch velocity of the Wind Burst
+// enchantment. It is 1 by default, which makes the launch reach the height
+// returned by enchantment.WindBurst.LaunchHeight exactly. It may be raised or
+// lowered to tune how the launch feels.
+var MaceWindBurstLaunchScale = 1.0
+
+// OnMaceSmash, if non-nil, is called after a player lands a mace smash attack
+// on a target. It may be used to keep statistics.
+var OnMaceSmash func(p *Player, target world.Entity)
+
+// smashEffects applies everything that happens when a smash attack with a mace
+// lands on target: the sound and particles, the knockback of nearby entities,
+// the launch of the Wind Burst enchantment and the reset of the fall distance
+// of the player.
+func (p *Player) smashEffects(target world.Entity, force, height, fallDistance float64, held item.Stack) {
+	pos := target.Position()
+	if OnMaceSmash != nil {
+		OnMaceSmash(p, target)
+	}
+
+	onGround := true
+	if g, ok := target.(interface{ OnGround() bool }); ok {
+		onGround = g.OnGround()
+	}
+	p.tx.PlaySound(pos, sound.MaceSmash{Ground: onGround, Heavy: fallDistance > item.MaceHeavySmashFall})
+	if onGround {
+		below := p.tx.Block(cube.PosFromVec3(pos.Sub(mgl64.Vec3{0, 0.5})))
+		p.tx.AddParticle(pos, particle.SmashAttack{Block: below})
+	}
+
+	r := item.MaceSmashRadius
+	for other := range p.tx.EntitiesWithin(cube.Box(-r, -r, -r, r, r, r).Translate(pos)) {
+		if other.H() == target.H() || other.H() == p.H() {
+			continue
+		}
+		l, ok := other.(entity.Living)
+		if !ok || l.Dead() || other.Position().Sub(pos).Len() > r {
+			continue
+		}
+		if fs, ok := other.(world.FakeSpectator); ok && fs.IsFakeSpectating() {
+			continue
+		}
+		if g, ok := other.(interface{ GameMode() world.GameMode }); ok && !g.GameMode().HasCollision() {
+			continue
+		}
+		l.KnockBack(pos, force, height)
+	}
+
+	if wb, ok := held.Enchantment(enchantment.WindBurst); ok {
+		p.tx.PlaySound(pos, sound.WindCharge{})
+		p.tx.AddParticle(pos, particle.WindCharge{})
+		v := entity.LaunchVelocityForHeight(enchantment.WindBurst.LaunchHeight(wb.Level())) * MaceWindBurstLaunchScale
+		p.SetVelocity(mgl64.Vec3{0, v, 0})
+	}
+	// Smashing resets the fall distance, so the next smash needs a new fall.
+	p.ResetFallDistance()
 }
 
 // StartBreaking makes the player start breaking the block at the position passed using the item currently
