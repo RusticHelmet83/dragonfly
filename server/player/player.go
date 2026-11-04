@@ -666,7 +666,8 @@ func (p *Player) updateFallState(distanceThisTick float64) {
 			p.fallNegate, p.fallNegateAir = false, false
 			p.fallDistance = max(0, min(p.fallDistance, p.fallNegateY-p.Position()[1]))
 		}
-		if p.fallDistance > 3 {
+		// Landing while gliding with an elytra never deals fall damage.
+		if p.fallDistance > 3 && !p.gliding {
 			p.fall(p.fallDistance)
 		}
 		p.ResetFallDistance()
@@ -1625,6 +1626,12 @@ func (p *Player) HeldItems() (mainHand, offHand item.Stack) {
 	return mainHand, offHand
 }
 
+// HeldSlot returns the hotbar slot (0-8) that is currently selected by the
+// player.
+func (p *Player) HeldSlot() int {
+	return int(*p.heldSlot)
+}
+
 // SetHeldItems sets items to the main hand and the off-hand of the player. The Stacks passed may be empty
 // (Stack.Empty()) to clear the held item.
 func (p *Player) SetHeldItems(mainHand, offHand item.Stack) {
@@ -2230,6 +2237,11 @@ func (p *Player) attributeSwapSource() (item.Stack, bool) {
 	prev, at := p.swapFrom, p.swapAt
 	p.swapFrom, p.swapAt = item.Stack{}, time.Time{}
 	if AttributeSwapEnabled == nil || prev.Empty() || time.Since(at) > AttributeSwapWindow {
+		return item.Stack{}, false
+	}
+	// Only weapons carry base attack damage worth swapping from. Switching from
+	// an ender pearl or a food item must not turn the attack into a fist hit.
+	if _, ok := prev.Item().(item.Weapon); !ok {
 		return item.Stack{}, false
 	}
 	if !AttributeSwapEnabled(p) {
