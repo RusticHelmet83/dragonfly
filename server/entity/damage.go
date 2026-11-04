@@ -13,9 +13,9 @@ type (
 		// Attacker holds the attacking entity. The entity may be a player or
 		// any other entity.
 		Attacker world.Entity
-		// ArmourPenetration is the fraction (0-1) of the armour points of the
-		// victim that is ignored when the damage is reduced by armour. It is
-		// set by the Breach enchantment of the mace.
+		// ArmourPenetration is the amount (0-1) by which the damage reduction of
+		// the victim's armour is lowered when the damage is reduced by armour. It
+		// is set by the Breach enchantment of the mace.
 		ArmourPenetration float64
 	}
 

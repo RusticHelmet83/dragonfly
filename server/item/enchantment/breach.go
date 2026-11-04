@@ -32,9 +32,11 @@ func (breach) Rarity() item.EnchantmentRarity {
 	return item.EnchantmentRarityRare
 }
 
-// ArmourPenetration returns the fraction (0-1) of the armour points of the
-// victim that is ignored by an attack with the level of Breach passed. Every
-// level ignores 15% of the armour.
+// ArmourPenetration returns the amount (as a fraction of damage, 0-1) that the
+// damage reduction of the armour of the victim is lowered by an attack with the
+// level of Breach passed. Every level lowers the reduction by 15 percentage
+// points, so armour that reduces damage by 50% only reduces it by 35% against
+// Breach I. Damage taken = damage * (1 - max(0, reduction - 0.15 * level)).
 func (breach) ArmourPenetration(level int) float64 {
 	return min(0.15*float64(level), 1)
 }

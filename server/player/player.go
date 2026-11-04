@@ -2063,14 +2063,19 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if b, ok := i.Enchantment(enchantment.Breach); ok && isMace {
 		src.ArmourPenetration = enchantment.Breach.ArmourPenetration(b.Level())
 	}
+	hadTotem := holdsTotem(living)
 	_, vulnerable := living.Hurt(dmg, src)
+	// A totem of undying that pops absorbs the hit, which makes Hurt report the
+	// entity as not vulnerable. The attack itself still landed though, so a
+	// smash attack must still apply its effects (Wind Burst, fall distance reset).
+	totemPopped := !vulnerable && hadTotem && !holdsTotem(living)
 	i, left := p.HeldItems()
 
 	if durable, ok := i.Item().(item.Durable); ok {
 		p.SetHeldItems(p.damageItem(i, durable.DurabilityInfo().AttackDurability), left)
 	}
 
-	if !vulnerable {
+	if !vulnerable && !totemPopped {
 		return true
 	}
 	if critical {
@@ -2093,6 +2098,21 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 		}
 	}
 	return true
+}
+
+// holdsTotem checks if the entity passed holds a totem of undying in either of
+// its hands.
+func holdsTotem(e world.Entity) bool {
+	h, ok := e.(interface {
+		HeldItems() (item.Stack, item.Stack)
+	})
+	if !ok {
+		return false
+	}
+	main, off := h.HeldItems()
+	_, a := main.Item().(item.Totem)
+	_, b := off.Item().(item.Totem)
+	return a || b
 }
 
 // maceSmashing checks if the player is currently falling far enough for an

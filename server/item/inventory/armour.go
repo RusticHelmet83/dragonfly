@@ -124,16 +124,17 @@ func (a *Armour) DamageReduction(dmg float64, src world.DamageSource) float64 {
 
 	dmg -= dmg * enchantment.ProtectionFactor(src, enchantments)
 	if src.ReducedByArmour() {
-		// Armour penetration (the Breach enchantment) makes a fraction of the
-		// armour points ineffective.
-		if p, ok := src.(interface{ ArmourPenetrationFraction() float64 }); ok {
-			defencePoints *= 1 - min(max(p.ArmourPenetrationFraction(), 0), 1)
-		}
 		// Armour in Bedrock edition reduces the damage taken by 4% for each effective armour point. Effective
 		// armour point decreases as damage increases, with 1 point lost for every 2 HP of damage. The defence
 		// reduction is decreased by the toughness armour value. Effective armour points will at minimum be 20% of
 		// armour points.
-		dmg -= dmg * 0.04 * math.Max(defencePoints*0.2, defencePoints-dmg/(2+toughness/4))
+		reduction := 0.04 * math.Max(defencePoints*0.2, defencePoints-dmg/(2+toughness/4))
+		// Armour penetration (the Breach enchantment) lowers the damage reduction
+		// of the armour by a number of percentage points, to a minimum of 0.
+		if p, ok := src.(interface{ ArmourPenetrationFraction() float64 }); ok {
+			reduction = math.Max(0, reduction-math.Max(p.ArmourPenetrationFraction(), 0))
+		}
+		dmg -= dmg * reduction
 	}
 	return original - dmg
 }
