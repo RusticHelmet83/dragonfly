@@ -77,6 +77,12 @@ type playerData struct {
 	// fallNegate, fallNegateY, fallNegateAir and fallNegateUntil implement the
 	// negation of fall damage after a wind charge burst. See
 	// NegateFallDamageAbove.
+	// swapFrom and swapAt hold the item that was in the main hand before the
+	// last hotbar slot change and when it happened. They implement attribute
+	// swapping, see AttributeSwapEnabled.
+	swapFrom item.Stack
+	swapAt   time.Time
+
 	fallNegate      bool
 	fallNegateAir   bool
 	fallNegateY     float64
@@ -1664,6 +1670,8 @@ func (p *Player) SetHeldSlot(to int) error {
 		p.session().SendHeldSlot(from, p, true)
 		return nil
 	}
+	p.swapFrom, _ = p.inv.Item(from)
+	p.swapAt = time.Now()
 	*p.heldSlot = uint32(to)
 	p.usingItem = false
 	shieldChanged := p.updateHeldItemState()
@@ -2124,7 +2132,15 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 		return true
 	}
 
-	dmg := i.AttackDamage()
+	// With attribute swapping, the base damage comes from the item that was held
+	// just before the slot switch (for example a sword), while the enchantments
+	// and the mace smash still come from the item held now (for example a Breach
+	// mace).
+	base := i
+	if prev, ok := p.attributeSwapSource(); ok {
+		base = prev
+	}
+	dmg := base.AttackDamage()
 	if strength, ok := p.Effect(effect.Strength); ok {
 		dmg += dmg * effect.Strength.Multiplier(strength.Level())
 	}
@@ -2188,6 +2204,38 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 		p.smashEffects(e, force, height, fallDistance, i)
 	}
 	return true
+}
+
+// AttributeSwapEnabled, if non-nil, is called to check if attribute swapping is
+// allowed for a player. Attribute swapping is disabled for everyone while it is
+// nil.
+//
+// Attribute swapping lets a player hit with one weapon and switch to another
+// right before the hit lands: the damage is then dealt with the base attack
+// damage of the first weapon (such as a sword or axe), but with the enchantments
+// of the second one (such as the Breach of a mace). The attack must happen
+// within AttributeSwapWindow of the slot switch.
+var AttributeSwapEnabled func(p *Player) bool
+
+// AttributeSwapWindow is the time after a hotbar slot change in which an attack
+// still uses the base attack damage of the previously held item if attribute
+// swapping is enabled. It is about two ticks by default, the closest a hotkey
+// press and a click can get to the same tick.
+var AttributeSwapWindow = 100 * time.Millisecond
+
+// attributeSwapSource returns the item that the base attack damage should be
+// taken from if the attack happening now is an attribute swap. The swap is
+// consumed, so it applies to a single attack only.
+func (p *Player) attributeSwapSource() (item.Stack, bool) {
+	prev, at := p.swapFrom, p.swapAt
+	p.swapFrom, p.swapAt = item.Stack{}, time.Time{}
+	if AttributeSwapEnabled == nil || prev.Empty() || time.Since(at) > AttributeSwapWindow {
+		return item.Stack{}, false
+	}
+	if !AttributeSwapEnabled(p) {
+		return item.Stack{}, false
+	}
+	return prev, true
 }
 
 // holdsTotem checks if the entity passed holds a totem of undying in either of
