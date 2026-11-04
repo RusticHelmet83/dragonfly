@@ -1626,6 +1626,13 @@ func (p *Player) HeldItems() (mainHand, offHand item.Stack) {
 	return mainHand, offHand
 }
 
+// OffHandInventory returns the single-slot inventory that holds the off-hand
+// item of the player. Handlers can be set on it to restrict what the client may
+// move in or out of the off-hand slot.
+func (p *Player) OffHandInventory() *inventory.Inventory {
+	return p.offHand
+}
+
 // HeldSlot returns the hotbar slot (0-8) that is currently selected by the
 // player.
 func (p *Player) HeldSlot() int {
