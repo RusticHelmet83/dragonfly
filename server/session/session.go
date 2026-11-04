@@ -89,6 +89,7 @@ type Session struct {
 	// Both are only touched while handling PlayerAuthInput.
 	autoSprinting    bool
 	ignoreStopSprint bool
+	shieldUse                      shieldUseState
 
 	lastChunkPos world.ChunkPos
 
