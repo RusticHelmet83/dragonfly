@@ -56,6 +56,14 @@ func (conf ItemBehaviourConfig) New() *ItemBehaviour {
 	return b
 }
 
+// ItemLifetime, if non-nil, is called every tick for every item entity and
+// returns the maximum age an item entity may reach in the world of tx before it
+// is removed. A return value of 0 or less means the default lifetime applies.
+// Because it is checked on the entity itself, it applies to every item entity
+// regardless of how it was created (drops, deaths, explosions, block breaking,
+// falling blocks, etc).
+var ItemLifetime func(tx *world.Tx) time.Duration
+
 // ItemBehaviour implements the behaviour of item entities.
 type ItemBehaviour struct {
 	conf    ItemBehaviourConfig
@@ -78,6 +86,12 @@ func (i *ItemBehaviour) Item() item.Stack {
 // Tick moves the entity, checks if it should be picked up by a nearby collector
 // or if it should merge with nearby item entities.
 func (i *ItemBehaviour) Tick(e *Ent, tx *world.Tx) *Movement {
+	if ItemLifetime != nil {
+		if d := ItemLifetime(tx); d > 0 && e.Age() > d {
+			_ = e.Close()
+			return nil
+		}
+	}
 	pos := cube.PosFromVec3(e.Position())
 	blockPos := pos.Side(cube.FaceDown)
 
