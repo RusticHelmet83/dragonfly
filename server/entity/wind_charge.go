@@ -1,6 +1,8 @@
 package entity
 
 import (
+	"math"
+
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/block/cube/trace"
 	"github.com/df-mc/dragonfly/server/world"
@@ -10,11 +12,12 @@ import (
 )
 
 const (
-	// windChargeBurstRadius is the radius of the burst of a wind charge.
-	windChargeBurstRadius = 2.4
-	// windChargeBurstForce is the knockback force at the centre of the burst. It
-	// falls off linearly to 0 at the edge of the burst.
-	windChargeBurstForce = 1.2
+	// windChargeBurstRadius is the explosion radius of a wind charge. Entities
+	// within twice this radius are affected.
+	windChargeBurstRadius = 1.2
+	// windChargeBurstForce is the knockback multiplier of the burst. The power
+	// falls off linearly to 0 at twice the radius.
+	windChargeBurstForce = 1.22
 )
 
 // NewWindCharge creates a wind charge entity at a position with an owner
@@ -27,7 +30,7 @@ func NewWindCharge(opts world.EntitySpawnOpts, owner world.Entity) *world.Entity
 
 var windChargeConf = ProjectileBehaviourConfig{
 	Gravity:    0,
-	Drag:       0.01,
+	Drag:       0,
 	Damage:     -1,
 	Collidable: true,
 	Hit:        windChargeHit,
@@ -44,7 +47,7 @@ func (windChargeType) Open(tx *world.Tx, handle *world.EntityHandle, data *world
 
 func (windChargeType) EncodeEntity() string { return "minecraft:wind_charge_projectile" }
 func (windChargeType) BBox(world.Entity) cube.BBox {
-	return cube.Box(-0.3125, 0, -0.3125, 0.3125, 0.3125, 0.3125)
+	return cube.Box(-0.15625, -0.15, -0.15625, 0.15625, 0.1625, 0.15625)
 }
 func (windChargeType) DecodeNBT(_ map[string]any, data *world.EntityData) {
 	data.Data = windChargeConf.New()
@@ -99,11 +102,13 @@ func HandleWindChargeCollision(tx *world.Tx, target trace.Result) bool {
 // passed. The entity direct, if non-nil, is the entity that was hit directly
 // and takes damage.
 //
-// The burst pushes every entity within windChargeBurstRadius away from the
-// impact point. The force falls off linearly with the distance and is added to
-// the current velocity of the entity, with an extra upwards push. This is the
-// behaviour of the featuremace implementation; there is no special launch for
-// the owner of the wind charge.
+// This mirrors Java's ServerExplosion.hurtEntities with a radius of 1.2 and a
+// knockback multiplier of 1.22: every entity within twice the radius of the
+// impact (measured from its feet) is pushed from the impact towards its eye
+// position with a power of (1 - dist) * exposure * 1.22, where dist is the
+// distance divided by twice the radius and exposure is the fraction of its
+// bounding box with a clear line to the impact. There is no additional upwards
+// push and the owner gets no special treatment.
 func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entity) {
 	tx.PlaySound(impact, sound.WindCharge{})
 	tx.AddParticle(impact, particle.WindCharge{})
@@ -117,8 +122,12 @@ func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entit
 		living.Hurt(1, ProjectileDamageSource{Projectile: e, Owner: owner})
 	}
 
-	r := windChargeBurstRadius
-	for other := range tx.EntitiesWithin(cube.Box(-r, -r, -r, r, r, r).Translate(impact)) {
+	doubleRadius := windChargeBurstRadius * 2
+	search := cube.Box(-doubleRadius-1, -doubleRadius-1, -doubleRadius-1, doubleRadius+1, doubleRadius+1, doubleRadius+1).Translate(impact)
+	for other := range tx.EntitiesWithin(search) {
+		if other.H().Type() == WindChargeType {
+			continue
+		}
 		living, ok := other.(Living)
 		if !ok || living.Dead() {
 			continue
@@ -129,18 +138,17 @@ func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entit
 		if g, ok := other.(interface{ GameMode() world.GameMode }); ok && !g.GameMode().HasCollision() {
 			continue
 		}
+		// Creative players that are flying take no knockback.
+		if f, ok := other.(interface{ Flying() bool }); ok && f.Flying() {
+			if g, ok := other.(interface{ GameMode() world.GameMode }); ok && g.GameMode().CreativeInventory() {
+				continue
+			}
+		}
 
-		delta := other.Position().Sub(impact)
-		distance := delta.Len()
-		if distance > r {
+		dist := other.Position().Sub(impact).Len() / doubleRadius
+		if dist > 1 {
 			continue
 		}
-		direction := mgl64.Vec3{0, 1, 0}
-		if distance > 0 {
-			direction = delta.Mul(1 / distance)
-		}
-		strength := windChargeBurstForce * (1 - distance/r)
-
 		mover, ok := other.(interface {
 			SetVelocity(mgl64.Vec3)
 			Velocity() mgl64.Vec3
@@ -148,8 +156,20 @@ func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entit
 		if !ok {
 			continue
 		}
-		knockback := direction.Mul(strength)
-		knockback[1] += strength * 0.5
+
+		origin := other.Position()
+		if eyed, ok := other.(interface{ EyeHeight() float64 }); ok {
+			origin[1] += eyed.EyeHeight()
+		}
+		delta := origin.Sub(impact)
+		if delta.LenSqr() == 0 {
+			continue
+		}
+		direction := delta.Normalize()
+
+		box := other.H().Type().BBox(other).Translate(other.Position())
+		power := (1 - dist) * windChargeSeenPercent(tx, impact, box) * windChargeBurstForce
+		knockback := direction.Mul(power)
 
 		// Fall damage is negated above the height of the burst, but the fall
 		// distance keeps counting so a mace smash is still possible.
@@ -161,6 +181,42 @@ func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entit
 		}
 		mover.SetVelocity(mover.Velocity().Add(knockback))
 	}
+}
+
+// windChargeSeenPercent is a port of Java's ServerExplosion.getSeenPercent. It
+// returns the fraction of sample points in the box that have an unobstructed
+// line to the centre of the burst.
+func windChargeSeenPercent(tx *world.Tx, center mgl64.Vec3, box cube.BBox) float64 {
+	size := box.Max().Sub(box.Min())
+	xs, ys, zs := 1/(size[0]*2+1), 1/(size[1]*2+1), 1/(size[2]*2+1)
+	xOffset := (1 - math.Floor(1/xs)*xs) / 2
+	zOffset := (1 - math.Floor(1/zs)*zs) / 2
+
+	var hits, count int
+	for xx := 0.0; xx <= 1.0; xx += xs {
+		for yy := 0.0; yy <= 1.0; yy += ys {
+			for zz := 0.0; zz <= 1.0; zz += zs {
+				from := mgl64.Vec3{
+					box.Min()[0] + xx*size[0] + xOffset,
+					box.Min()[1] + yy*size[1],
+					box.Min()[2] + zz*size[2] + zOffset,
+				}
+				clear := true
+				trace.TraverseBlocks(from, center, func(pos cube.Pos) bool {
+					if _, ok := trace.BlockIntercept(pos, tx, tx.Block(pos), from, center); ok {
+						clear = false
+						return false
+					}
+					return true
+				})
+				if clear {
+					hits++
+				}
+				count++
+			}
+		}
+	}
+	return float64(hits) / float64(count)
 }
 
 // blastOrigin returns the point a wind charge bursts at when it hits a block:
