@@ -18,11 +18,6 @@ type (
 		// the victim's armour is lowered when the damage is reduced by armour. It
 		// is set by the Breach enchantment of the mace.
 		ArmourPenetration float64
-		// AttributeSwap is true for the follow-up hit of an attribute swap that
-		// happens after the weapon hit it upgrades. It lands inside the attack
-		// immunity of the victim on purpose, so that only the extra damage is
-		// dealt. Handlers should not discard it as an immunity-window hit.
-		AttributeSwap bool
 	}
 
 	// VoidDamageSource is used for damage caused by an entity being in the
@@ -82,9 +77,6 @@ func (a AttackDamageSource) ArmourPenetrationFraction() float64 {
 	return a.ArmourPenetration
 }
 
-// AttributeSwapHit returns true if the damage is the follow-up hit of an
-// attribute swap, see AttackDamageSource.AttributeSwap.
-func (a AttackDamageSource) AttributeSwapHit() bool       { return a.AttributeSwap }
 func (AttackDamageSource) ReducedByArmour() bool          { return true }
 func (AttackDamageSource) ReducedByResistance() bool      { return true }
 func (AttackDamageSource) Fire() bool                     { return false }
