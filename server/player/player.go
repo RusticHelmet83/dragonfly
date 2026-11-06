@@ -2172,7 +2172,7 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if b, ok := i.Enchantment(enchantment.Breach); ok && isMace {
 		src.ArmourPenetration = enchantment.Breach.ArmourPenetration(b.Level())
 		if swapped {
-			dmg *= AttributeSwapBreachDamageScale
+			dmg = breachSwapRawDamage(p, living, src, critical)
 		}
 	}
 	hadTotem := holdsTotem(living)
@@ -2240,12 +2240,52 @@ var AttributeSwapEnabled func(p *Player) bool
 // press and a click can get to the same tick.
 var AttributeSwapWindow = 100 * time.Millisecond
 
-// AttributeSwapBreachDamageScale multiplies the damage of an attribute swap hit
-// that lands with a Breach mace. It is not vanilla behaviour: it is a tuning
-// value that makes breach swaps hit as hard as on other practice servers (about
-// 2 hearts on a critical hit and about 4 hearts with Strength II against full
-// Protection IV netherite). Set it to 1 to disable.
-var AttributeSwapBreachDamageScale = 1.25
+// breachSwapDamage returns the fixed amount of health (not hearts: 2 health is
+// one heart) that an attribute swap hit with a Breach mace deals to its target.
+// It is not calculated from weapons, enchantments or armour. Critical hits deal
+// 5 health (2.5 hearts) and 10 health (5 hearts, two hits kill a 20 health
+// player) with Strength II. Hits that are not critical deal 2 health (1 heart)
+// and 4 health (2 hearts) with Strength II. Strength I lies in between.
+func breachSwapDamage(strengthLevel int, critical bool) float64 {
+	lvl := float64(min(max(strengthLevel, 0), 2))
+	if critical {
+		return 5 + 2.5*lvl
+	}
+	return 2 + lvl
+}
+
+// breachSwapRawDamage returns the damage to pass to Hurt so that the target
+// really loses breachSwapDamage health after its armour, enchantments and
+// resistance reduced the hit. Targets that cannot report their reduced damage
+// get the fixed amount as is.
+func breachSwapRawDamage(p *Player, target entity.Living, src world.DamageSource, critical bool) float64 {
+	level := 0
+	if e, ok := p.Effect(effect.Strength); ok {
+		level = e.Level()
+	}
+	want := breachSwapDamage(level, critical)
+	t, ok := target.(interface {
+		FinalDamageFrom(float64, world.DamageSource) float64
+	})
+	if !ok {
+		return want
+	}
+	// The final damage grows with the raw damage, so search for the raw damage
+	// that produces the wanted final damage.
+	lo, hi := want, want
+	for t.FinalDamageFrom(hi, src) < want && hi < 1e5 {
+		hi *= 2
+	}
+	for i := 0; i < 40; i++ {
+		mid := (lo + hi) / 2
+		if t.FinalDamageFrom(mid, src) < want {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return hi
+}
 
 // attributeSwapSource returns the item that the base attack damage should be
 // taken from if the attack happening now is an attribute swap. The swap is
