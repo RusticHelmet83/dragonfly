@@ -2258,9 +2258,9 @@ var AttributeSwapEnabled func(p *Player) bool
 
 // AttributeSwapWindow is the time after a hotbar slot change in which an attack
 // still uses the base attack damage of the previously held item if attribute
-// swapping is enabled. It is about two ticks by default, the closest a hotkey
-// press and a click can get to the same tick.
-var AttributeSwapWindow = 100 * time.Millisecond
+// swapping is enabled. It is about three ticks by default, which leaves room for
+// touch input and network jitter on Bedrock.
+var AttributeSwapWindow = 150 * time.Millisecond
 
 // attributeSwapSource returns the item that the base attack damage should be
 // taken from if the attack happening now is an attribute swap. The swap is
