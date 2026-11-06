@@ -2141,8 +2141,10 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	// and the mace smash still come from the item held now (for example a Breach
 	// mace).
 	base := i
+	swapped := false
 	if prev, ok := p.attributeSwapSource(); ok {
 		base = prev
+		swapped = true
 	}
 	dmg := base.AttackDamage()
 	if strength, ok := p.Effect(effect.Strength); ok {
@@ -2169,6 +2171,9 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	src := entity.AttackDamageSource{Attacker: p}
 	if b, ok := i.Enchantment(enchantment.Breach); ok && isMace {
 		src.ArmourPenetration = enchantment.Breach.ArmourPenetration(b.Level())
+		if swapped {
+			dmg *= AttributeSwapBreachDamageScale
+		}
 	}
 	hadTotem := holdsTotem(living)
 	n, result := living.Hurt(dmg, src)
@@ -2193,6 +2198,14 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	}
 	if !result.Accepted() && !totemPopped {
 		return true
+	}
+	if swapped && isMace && !smash {
+		// A swapped-in mace hit makes the mace smash sound even without a smash.
+		onGround := true
+		if g, ok := e.(interface{ OnGround() bool }); ok {
+			onGround = g.OnGround()
+		}
+		p.tx.PlaySound(living.Position(), sound.MaceSmash{Ground: onGround})
 	}
 	if critical {
 		for _, v := range p.tx.Viewers(living.Position()) {
@@ -2226,6 +2239,13 @@ var AttributeSwapEnabled func(p *Player) bool
 // swapping is enabled. It is about two ticks by default, the closest a hotkey
 // press and a click can get to the same tick.
 var AttributeSwapWindow = 100 * time.Millisecond
+
+// AttributeSwapBreachDamageScale multiplies the damage of an attribute swap hit
+// that lands with a Breach mace. It is not vanilla behaviour: it is a tuning
+// value that makes breach swaps hit as hard as on other practice servers (about
+// 2 hearts on a critical hit and about 4 hearts with Strength II against full
+// Protection IV netherite). Set it to 1 to disable.
+var AttributeSwapBreachDamageScale = 1.25
 
 // attributeSwapSource returns the item that the base attack damage should be
 // taken from if the attack happening now is an attribute swap. The swap is
