@@ -82,6 +82,9 @@ type playerData struct {
 	// swapping, see AttributeSwapEnabled.
 	swapFrom item.Stack
 	swapAt   time.Time
+	// swapAxeAt is the last time that the player switched away from an axe, see
+	// ShieldSwapWindow.
+	swapAxeAt time.Time
 
 	fallNegate      bool
 	fallNegateAir   bool
@@ -1676,6 +1679,9 @@ func (p *Player) SetHeldSlot(to int) error {
 	}
 	p.swapFrom, _ = p.inv.Item(from)
 	p.swapAt = time.Now()
+	if _, ok := p.swapFrom.Item().(item.Axe); ok {
+		p.swapAxeAt = p.swapAt
+	}
 	*p.heldSlot = uint32(to)
 	p.usingItem = false
 	shieldChanged := p.updateHeldItemState()
@@ -2178,6 +2184,18 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if b, ok := i.Enchantment(enchantment.Breach); ok && isMace {
 		src.ArmourPenetration = enchantment.Breach.ArmourPenetration(b.Level())
 	}
+	if swapped && smash && isMace {
+		// Stun slam: a smash with a mace that was swapped in right after an axe
+		// disables the shield of the target, so that the smash is not blocked.
+		if disabler, ok := base.Item().(world.ShieldDisabler); ok {
+			if t, ok := e.(interface {
+				ShieldBlocking() bool
+				DisableShield(time.Duration)
+			}); ok && t.ShieldBlocking() {
+				t.DisableShield(disabler.ShieldDisableDuration())
+			}
+		}
+	}
 	hadTotem := holdsTotem(living)
 	n, result := living.Hurt(dmg, src)
 	// A totem of undying that pops absorbs the hit, which makes Hurt report the
@@ -2243,6 +2261,31 @@ var AttributeSwapEnabled func(p *Player) bool
 // touch input and network jitter on Bedrock.
 var AttributeSwapWindow = 150 * time.Millisecond
 
+// ShieldSwapWindow is the time after a player switches away from an axe in which
+// their attacks still disable the shield of a target, if attribute swapping is
+// enabled. It is about six ticks.
+var ShieldSwapWindow = 300 * time.Millisecond
+
+// SwapShieldDisableDuration returns how long an attack of the player disables a
+// shield because they held an axe a moment ago, or 0 if they did not.
+func (p *Player) SwapShieldDisableDuration() time.Duration {
+	if AttributeSwapEnabled == nil || p.swapAxeAt.IsZero() || time.Since(p.swapAxeAt) > ShieldSwapWindow || !AttributeSwapEnabled(p) {
+		return 0
+	}
+	return item.Axe{}.ShieldDisableDuration()
+}
+
+// javaAxeDamage returns the total attack damage that an axe has in Java Edition.
+func javaAxeDamage(a item.Axe) float64 {
+	switch a.Tier.Name {
+	case "netherite":
+		return 10
+	case "diamond", "iron", "stone":
+		return 9
+	}
+	return 7
+}
+
 // swapBaseDamage returns the Java Edition damage of an attribute swap hit before
 // the critical multiplier, and the enchantment bonus of the held item that is
 // added after it. The attack damage attribute still holds the modifiers of the
@@ -2251,7 +2294,9 @@ var AttributeSwapWindow = 150 * time.Millisecond
 // and -4 per level.
 func (p *Player) swapBaseDamage(weapon, held item.Stack) (dmg, enchantBonus float64) {
 	dmg = 1
-	if w, ok := weapon.Item().(item.Weapon); ok {
+	if a, ok := weapon.Item().(item.Axe); ok {
+		dmg = javaAxeDamage(a)
+	} else if w, ok := weapon.Item().(item.Weapon); ok {
 		dmg = w.AttackDamage()
 	}
 	if strength, ok := p.Effect(effect.Strength); ok {

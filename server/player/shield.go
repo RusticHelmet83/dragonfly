@@ -231,10 +231,28 @@ func shieldDisableCooldownFrom(src world.DamageSource) (time.Duration, bool) {
 	mainHand, _ := attacker.HeldItems()
 	disabler, ok := mainHand.Item().(world.ShieldDisabler)
 	if !ok {
+		// Axe swapping: an axe that was held a moment ago still disables the
+		// shield, even if another weapon is held now.
+		if sw, ok := attacker.(interface{ SwapShieldDisableDuration() time.Duration }); ok {
+			if cooldown := sw.SwapShieldDisableDuration(); cooldown > 0 {
+				return cooldown, true
+			}
+		}
 		return 0, false
 	}
 	cooldown := disabler.ShieldDisableDuration()
 	return cooldown, cooldown > 0
+}
+
+// DisableShield lowers the shield of the player and puts it on cooldown for the
+// duration passed.
+func (p *Player) DisableShield(d time.Duration) {
+	p.setCooldown(item.Shield{}, d, false)
+	p.resetShieldBlocking()
+	if p.tx != nil {
+		p.tx.PlaySound(p.Position(), sound.ShieldBlock{})
+		p.updateState()
+	}
 }
 
 // shieldShouldBlockDamage reports whether an eligible hit should reach shield handling. Damage reduced to zero before
