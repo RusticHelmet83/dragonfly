@@ -2184,6 +2184,7 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if b, ok := i.Enchantment(enchantment.Breach); ok && isMace {
 		src.ArmourPenetration = enchantment.Breach.ArmourPenetration(b.Level())
 	}
+	stunSlam := false
 	if swapped && smash && isMace {
 		// Stun slam: a smash with a mace that was swapped in right after an axe
 		// disables the shield of the target, so that the smash is not blocked.
@@ -2193,6 +2194,7 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 				DisableShield(time.Duration)
 			}); ok && t.ShieldBlocking() {
 				t.DisableShield(disabler.ShieldDisableDuration())
+				stunSlam = true
 			}
 		}
 	}
@@ -2219,6 +2221,13 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	}
 	if !result.Accepted() && !totemPopped {
 		return true
+	}
+	if stunSlam {
+		p.notifyAttributeSwap(AttributeSwapStunSlam)
+	} else if swapped && isMace {
+		if _, ok := i.Enchantment(enchantment.Breach); ok {
+			p.notifyAttributeSwap(AttributeSwapBreach)
+		}
 	}
 	if swapped && isMace && !smash {
 		// A swapped-in mace hit makes the mace smash sound even without a smash.
@@ -2260,6 +2269,26 @@ var AttributeSwapEnabled func(p *Player) bool
 // swapping is enabled. It is about three ticks by default, which leaves room for
 // touch input and network jitter on Bedrock.
 var AttributeSwapWindow = 150 * time.Millisecond
+
+// The kinds of attribute swap that can be performed, see
+// Player.notifyAttributeSwap.
+const (
+	// AttributeSwapBreach is a Breach swap: a weapon swapped to a Breach mace.
+	AttributeSwapBreach = "breach swap"
+	// AttributeSwapShieldDisable is an axe swap that disabled a shield.
+	AttributeSwapShieldDisable = "axe swap shield disable"
+	// AttributeSwapStunSlam is an axe to mace smash that disabled a shield.
+	AttributeSwapStunSlam = "stun slam"
+)
+
+// notifyAttributeSwap tells the handler of the player that they performed an
+// attribute swap of the kind passed, if the handler implements
+// HandleAttributeSwap(*Player, string). It is used to show messages.
+func (p *Player) notifyAttributeSwap(kind string) {
+	if h, ok := p.Handler().(interface{ HandleAttributeSwap(*Player, string) }); ok {
+		h.HandleAttributeSwap(p, kind)
+	}
+}
 
 // ShieldSwapWindow is the time after a player switches away from an axe in which
 // their attacks still disable the shield of a target, if attribute swapping is

@@ -213,20 +213,20 @@ func shieldBlockInfo(src world.DamageSource) (world.ShieldBlockInfo, bool) {
 }
 
 // shieldDisableCooldownFrom returns the shield cooldown caused by an axe attack.
-func shieldDisableCooldownFrom(src world.DamageSource) (time.Duration, bool) {
+func shieldDisableCooldownFrom(src world.DamageSource) (cooldown time.Duration, ok, viaSwap bool) {
 	attack, ok := src.(entity.AttackDamageSource)
 	if !ok {
-		return 0, false
+		return 0, false, false
 	}
 	// TODO(2): Implement world.ShieldDisabler on the Warden when Warden support is added.
 	if attacker, ok := attack.Attacker.(world.ShieldDisabler); ok {
 		if cooldown := attacker.ShieldDisableDuration(); cooldown > 0 {
-			return cooldown, true
+			return cooldown, true, false
 		}
 	}
 	attacker, ok := attack.Attacker.(item.Carrier)
 	if !ok {
-		return 0, false
+		return 0, false, false
 	}
 	mainHand, _ := attacker.HeldItems()
 	disabler, ok := mainHand.Item().(world.ShieldDisabler)
@@ -235,13 +235,13 @@ func shieldDisableCooldownFrom(src world.DamageSource) (time.Duration, bool) {
 		// shield, even if another weapon is held now.
 		if sw, ok := attacker.(interface{ SwapShieldDisableDuration() time.Duration }); ok {
 			if cooldown := sw.SwapShieldDisableDuration(); cooldown > 0 {
-				return cooldown, true
+				return cooldown, true, true
 			}
 		}
-		return 0, false
+		return 0, false, false
 	}
-	cooldown := disabler.ShieldDisableDuration()
-	return cooldown, cooldown > 0
+	cooldown = disabler.ShieldDisableDuration()
+	return cooldown, cooldown > 0, false
 }
 
 // DisableShield lowers the shield of the player and puts it on cooldown for the
@@ -381,7 +381,12 @@ func (p *Player) blockDamageWithShield(dmg float64, src world.DamageSource, info
 		p.recordShieldBlock(durabilityDamage, nil, 0)
 	}
 	p.knockBackShieldAttacker(src)
-	if cooldown, ok := shieldDisableCooldownFrom(src); ok {
+	if cooldown, ok, viaSwap := shieldDisableCooldownFrom(src); ok {
+		if attack, isAttack := src.(entity.AttackDamageSource); isAttack && viaSwap {
+			if a, isPlayer := attack.Attacker.(*Player); isPlayer {
+				a.notifyAttributeSwap(AttributeSwapShieldDisable)
+			}
+		}
 		p.setCooldown(item.Shield{}, cooldown, false)
 		p.resetShieldBlocking()
 	} else {
