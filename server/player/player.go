@@ -82,6 +82,9 @@ type playerData struct {
 	// swapping, see AttributeSwapEnabled.
 	swapFrom item.Stack
 	swapAt   time.Time
+	// swapPending is the last normal weapon hit, kept so that a switch to a Breach
+	// mace right after it can still turn it into an attribute swap.
+	swapPending swapPendingHit
 
 	fallNegate      bool
 	fallNegateAir   bool
@@ -1686,6 +1689,7 @@ func (p *Player) SetHeldSlot(to int) error {
 	if shieldChanged {
 		p.updateState()
 	}
+	p.retroactiveAttributeSwap()
 	p.session().SendHeldSlot(to, p, false)
 	return nil
 }
@@ -2148,26 +2152,7 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	}
 	var dmg, enchantBonus float64
 	if swapped {
-		// Java Edition parity: the attack damage attribute still holds the
-		// modifiers of the previously held weapon, so the base is that weapon's
-		// total attack damage (no Bedrock +1 quirk). Strength and Weakness are
-		// flat attribute modifiers of +3 and -4 per level. Enchantment damage
-		// of the held item (Sharpness) is added after the critical multiplier.
-		if w, ok := base.Item().(item.Weapon); ok {
-			dmg = w.AttackDamage()
-		} else {
-			dmg = 1
-		}
-		if strength, ok := p.Effect(effect.Strength); ok {
-			dmg += 3 * float64(strength.Level())
-		}
-		if weakness, ok := p.Effect(effect.Weakness); ok {
-			dmg -= 4 * float64(weakness.Level())
-		}
-		dmg = max(dmg, 0)
-		if s, ok := i.Enchantment(enchantment.Sharpness); ok {
-			enchantBonus = enchantment.Sharpness.Addend(s.Level())
-		}
+		dmg, enchantBonus = p.swapBaseDamage(base, i)
 	} else {
 		dmg = base.AttackDamage()
 		if strength, ok := p.Effect(effect.Strength); ok {
@@ -2221,6 +2206,9 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if !result.Accepted() && !totemPopped {
 		return true
 	}
+	if _, ok := base.Item().(item.Weapon); ok && !swapped && !isMace {
+		p.swapPending = swapPendingHit{target: e.H(), at: time.Now(), weapon: base, critical: critical}
+	}
 	if swapped && isMace && !smash {
 		// A swapped-in mace hit makes the mace smash sound even without a smash.
 		onGround := true
@@ -2261,6 +2249,80 @@ var AttributeSwapEnabled func(p *Player) bool
 // swapping is enabled. It is about three ticks by default, which leaves room for
 // touch input and network jitter on Bedrock.
 var AttributeSwapWindow = 150 * time.Millisecond
+
+// swapPendingHit holds the last normal weapon hit of a player, see
+// Player.retroactiveAttributeSwap.
+type swapPendingHit struct {
+	target   *world.EntityHandle
+	at       time.Time
+	weapon   item.Stack
+	critical bool
+}
+
+// swapBaseDamage returns the Java Edition damage of an attribute swap hit before
+// the critical multiplier, and the enchantment bonus of the held item that is
+// added after it. The attack damage attribute still holds the modifiers of the
+// previously held weapon, so the base is that weapon's total attack damage (no
+// Bedrock +1 quirk). Strength and Weakness are flat attribute modifiers of +3
+// and -4 per level.
+func (p *Player) swapBaseDamage(weapon, held item.Stack) (dmg, enchantBonus float64) {
+	dmg = 1
+	if w, ok := weapon.Item().(item.Weapon); ok {
+		dmg = w.AttackDamage()
+	}
+	if strength, ok := p.Effect(effect.Strength); ok {
+		dmg += 3 * float64(strength.Level())
+	}
+	if weakness, ok := p.Effect(effect.Weakness); ok {
+		dmg -= 4 * float64(weakness.Level())
+	}
+	if s, ok := held.Enchantment(enchantment.Sharpness); ok {
+		enchantBonus = enchantment.Sharpness.Addend(s.Level())
+	}
+	return max(dmg, 0), enchantBonus
+}
+
+// retroactiveAttributeSwap handles the attack happening before the slot switch:
+// if the player hit something with a weapon and switches to a Breach mace within
+// AttributeSwapWindow, the hit is turned into an attribute swap hit. The target
+// is hurt again with the swap damage, and because of its attack immunity it only
+// takes the damage that exceeds the weapon hit that already landed.
+func (p *Player) retroactiveAttributeSwap() {
+	pend := p.swapPending
+	p.swapPending = swapPendingHit{}
+	if pend.target == nil || time.Since(pend.at) > AttributeSwapWindow || AttributeSwapEnabled == nil || !AttributeSwapEnabled(p) {
+		return
+	}
+	held, _ := p.HeldItems()
+	if _, ok := held.Item().(item.Mace); !ok {
+		return
+	}
+	b, ok := held.Enchantment(enchantment.Breach)
+	if !ok {
+		return
+	}
+	e, ok := pend.target.Entity(p.tx)
+	if !ok {
+		return
+	}
+	living, ok := e.(entity.Living)
+	if !ok || living.Dead() || !p.canReach(e.Position()) {
+		return
+	}
+	dmg, bonus := p.swapBaseDamage(pend.weapon, held)
+	if pend.critical {
+		dmg *= 1.5
+	}
+	dmg += bonus
+	src := entity.AttackDamageSource{Attacker: p, ArmourPenetration: enchantment.Breach.ArmourPenetration(b.Level())}
+	if _, res := living.Hurt(dmg, src); res.Accepted() {
+		onGround := true
+		if g, ok := e.(interface{ OnGround() bool }); ok {
+			onGround = g.OnGround()
+		}
+		p.tx.PlaySound(living.Position(), sound.MaceSmash{Ground: onGround})
+	}
+}
 
 // attributeSwapSource returns the item that the base attack damage should be
 // taken from if the attack happening now is an attribute swap. The swap is
