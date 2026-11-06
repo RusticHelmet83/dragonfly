@@ -2314,7 +2314,7 @@ func (p *Player) retroactiveAttributeSwap() {
 		dmg *= 1.5
 	}
 	dmg += bonus
-	src := entity.AttackDamageSource{Attacker: p, ArmourPenetration: enchantment.Breach.ArmourPenetration(b.Level())}
+	src := entity.AttackDamageSource{Attacker: p, ArmourPenetration: enchantment.Breach.ArmourPenetration(b.Level()), AttributeSwap: true}
 	if _, res := living.Hurt(dmg, src); res.Accepted() {
 		onGround := true
 		if g, ok := e.(interface{ OnGround() bool }); ok {

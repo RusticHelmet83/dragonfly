@@ -18,6 +18,11 @@ type (
 		// the victim's armour is lowered when the damage is reduced by armour. It
 		// is set by the Breach enchantment of the mace.
 		ArmourPenetration float64
+		// AttributeSwap is true for the follow-up hit of an attribute swap that
+		// happens after the weapon hit it upgrades. It lands inside the attack
+		// immunity of the victim on purpose, so that only the extra damage is
+		// dealt. Handlers should not discard it as an immunity-window hit.
+		AttributeSwap bool
 	}
 
 	// VoidDamageSource is used for damage caused by an entity being in the
@@ -64,18 +69,22 @@ func (FallDamageSource) Fire() bool                { return false }
 func (FallDamageSource) AffectedByEnchantment(e item.EnchantmentType) bool {
 	return e == enchantment.FeatherFalling
 }
-func (FallDamageSource) IgnoreTotem() bool                { return false }
-func (GlideDamageSource) ReducedByArmour() bool           { return false }
-func (GlideDamageSource) ReducedByResistance() bool       { return true }
-func (GlideDamageSource) Fire() bool                      { return false }
-func (GlideDamageSource) IgnoreTotem() bool               { return false }
-func (LightningDamageSource) ReducedByArmour() bool       { return true }
-func (LightningDamageSource) ReducedByResistance() bool   { return true }
-func (LightningDamageSource) Fire() bool                  { return false }
-func (LightningDamageSource) IgnoreTotem() bool           { return false }
+func (FallDamageSource) IgnoreTotem() bool              { return false }
+func (GlideDamageSource) ReducedByArmour() bool         { return false }
+func (GlideDamageSource) ReducedByResistance() bool     { return true }
+func (GlideDamageSource) Fire() bool                    { return false }
+func (GlideDamageSource) IgnoreTotem() bool             { return false }
+func (LightningDamageSource) ReducedByArmour() bool     { return true }
+func (LightningDamageSource) ReducedByResistance() bool { return true }
+func (LightningDamageSource) Fire() bool                { return false }
+func (LightningDamageSource) IgnoreTotem() bool         { return false }
 func (a AttackDamageSource) ArmourPenetrationFraction() float64 {
 	return a.ArmourPenetration
 }
+
+// AttributeSwapHit returns true if the damage is the follow-up hit of an
+// attribute swap, see AttackDamageSource.AttributeSwap.
+func (a AttackDamageSource) AttributeSwapHit() bool       { return a.AttributeSwap }
 func (AttackDamageSource) ReducedByArmour() bool          { return true }
 func (AttackDamageSource) ReducedByResistance() bool      { return true }
 func (AttackDamageSource) Fire() bool                     { return false }
