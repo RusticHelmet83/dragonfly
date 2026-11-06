@@ -2146,15 +2146,39 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 		base = prev
 		swapped = true
 	}
-	dmg := base.AttackDamage()
-	if strength, ok := p.Effect(effect.Strength); ok {
-		dmg += dmg * effect.Strength.Multiplier(strength.Level())
-	}
-	if weakness, ok := p.Effect(effect.Weakness); ok {
-		dmg -= dmg * effect.Weakness.Multiplier(weakness.Level())
-	}
-	if s, ok := i.Enchantment(enchantment.Sharpness); ok {
-		dmg += enchantment.Sharpness.Addend(s.Level())
+	var dmg, enchantBonus float64
+	if swapped {
+		// Java Edition parity: the attack damage attribute still holds the
+		// modifiers of the previously held weapon, so the base is that weapon's
+		// total attack damage (no Bedrock +1 quirk). Strength and Weakness are
+		// flat attribute modifiers of +3 and -4 per level. Enchantment damage
+		// of the held item (Sharpness) is added after the critical multiplier.
+		if w, ok := base.Item().(item.Weapon); ok {
+			dmg = w.AttackDamage()
+		} else {
+			dmg = 1
+		}
+		if strength, ok := p.Effect(effect.Strength); ok {
+			dmg += 3 * float64(strength.Level())
+		}
+		if weakness, ok := p.Effect(effect.Weakness); ok {
+			dmg -= 4 * float64(weakness.Level())
+		}
+		dmg = max(dmg, 0)
+		if s, ok := i.Enchantment(enchantment.Sharpness); ok {
+			enchantBonus = enchantment.Sharpness.Addend(s.Level())
+		}
+	} else {
+		dmg = base.AttackDamage()
+		if strength, ok := p.Effect(effect.Strength); ok {
+			dmg += dmg * effect.Strength.Multiplier(strength.Level())
+		}
+		if weakness, ok := p.Effect(effect.Weakness); ok {
+			dmg -= dmg * effect.Weakness.Multiplier(weakness.Level())
+		}
+		if s, ok := i.Enchantment(enchantment.Sharpness); ok {
+			dmg += enchantment.Sharpness.Addend(s.Level())
+		}
 	}
 	fallDistance := p.fallDistance
 	if smash {
@@ -2167,13 +2191,11 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if critical {
 		dmg *= 1.5
 	}
+	dmg += enchantBonus
 
 	src := entity.AttackDamageSource{Attacker: p}
 	if b, ok := i.Enchantment(enchantment.Breach); ok && isMace {
 		src.ArmourPenetration = enchantment.Breach.ArmourPenetration(b.Level())
-		if swapped {
-			dmg = breachSwapRawDamage(p, living, src, critical)
-		}
 	}
 	hadTotem := holdsTotem(living)
 	n, result := living.Hurt(dmg, src)
@@ -2239,53 +2261,6 @@ var AttributeSwapEnabled func(p *Player) bool
 // swapping is enabled. It is about two ticks by default, the closest a hotkey
 // press and a click can get to the same tick.
 var AttributeSwapWindow = 100 * time.Millisecond
-
-// breachSwapDamage returns the fixed amount of health (not hearts: 2 health is
-// one heart) that an attribute swap hit with a Breach mace deals to its target.
-// It is not calculated from weapons, enchantments or armour. Critical hits deal
-// 5 health (2.5 hearts) and 10 health (5 hearts, two hits kill a 20 health
-// player) with Strength II. Hits that are not critical deal 2 health (1 heart)
-// and 4 health (2 hearts) with Strength II. Strength I lies in between.
-func breachSwapDamage(strengthLevel int, critical bool) float64 {
-	lvl := float64(min(max(strengthLevel, 0), 2))
-	if critical {
-		return 5 + 2.5*lvl
-	}
-	return 2 + lvl
-}
-
-// breachSwapRawDamage returns the damage to pass to Hurt so that the target
-// really loses breachSwapDamage health after its armour, enchantments and
-// resistance reduced the hit. Targets that cannot report their reduced damage
-// get the fixed amount as is.
-func breachSwapRawDamage(p *Player, target entity.Living, src world.DamageSource, critical bool) float64 {
-	level := 0
-	if e, ok := p.Effect(effect.Strength); ok {
-		level = e.Level()
-	}
-	want := breachSwapDamage(level, critical)
-	t, ok := target.(interface {
-		FinalDamageFrom(float64, world.DamageSource) float64
-	})
-	if !ok {
-		return want
-	}
-	// The final damage grows with the raw damage, so search for the raw damage
-	// that produces the wanted final damage.
-	lo, hi := want, want
-	for t.FinalDamageFrom(hi, src) < want && hi < 1e5 {
-		hi *= 2
-	}
-	for i := 0; i < 40; i++ {
-		mid := (lo + hi) / 2
-		if t.FinalDamageFrom(mid, src) < want {
-			lo = mid
-		} else {
-			hi = mid
-		}
-	}
-	return hi
-}
 
 // attributeSwapSource returns the item that the base attack damage should be
 // taken from if the attack happening now is an attribute swap. The swap is
