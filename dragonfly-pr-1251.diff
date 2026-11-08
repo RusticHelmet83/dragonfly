@@ -1,0 +1,816 @@
+diff --git a/server/item/enchantment/fire_aspect.go b/server/item/enchantment/fire_aspect.go
+index e93c1123fd..b1a2bcf07a 100644
+--- a/server/item/enchantment/fire_aspect.go
++++ b/server/item/enchantment/fire_aspect.go
+@@ -45,5 +45,5 @@ func (fireAspect) CompatibleWithEnchantment(item.EnchantmentType) bool {
+ // CompatibleWithItem ...
+ func (fireAspect) CompatibleWithItem(i world.Item) bool {
+ 	t, ok := i.(item.Tool)
+-	return ok && t.ToolType() == item.TypeSword
++	return ok && (t.ToolType() == item.TypeSword || t.ToolType() == item.TypeSpear)
+ }
+diff --git a/server/item/enchantment/knockback.go b/server/item/enchantment/knockback.go
+index 2465f0ac80..73b0f871cb 100644
+--- a/server/item/enchantment/knockback.go
++++ b/server/item/enchantment/knockback.go
+@@ -44,5 +44,5 @@ func (knockback) CompatibleWithEnchantment(item.EnchantmentType) bool {
+ // CompatibleWithItem ...
+ func (knockback) CompatibleWithItem(i world.Item) bool {
+ 	t, ok := i.(item.Tool)
+-	return ok && t.ToolType() == item.TypeSword
++	return ok && (t.ToolType() == item.TypeSword || t.ToolType() == item.TypeSpear)
+ }
+diff --git a/server/item/enchantment/sharpness.go b/server/item/enchantment/sharpness.go
+index 0cb6193661..e1527e4b16 100644
+--- a/server/item/enchantment/sharpness.go
++++ b/server/item/enchantment/sharpness.go
+@@ -45,5 +45,5 @@ func (sharpness) CompatibleWithEnchantment(item.EnchantmentType) bool {
+ // CompatibleWithItem ...
+ func (sharpness) CompatibleWithItem(i world.Item) bool {
+ 	t, ok := i.(item.Tool)
+-	return ok && (t.ToolType() == item.TypeSword || t.ToolType() == item.TypeAxe)
++	return ok && (t.ToolType() == item.TypeSword || t.ToolType() == item.TypeAxe || t.ToolType() == item.TypeSpear)
+ }
+diff --git a/server/item/recipe/item_tags.json b/server/item/recipe/item_tags.json
+index 59031ed59f..6c30538b48 100644
+--- a/server/item/recipe/item_tags.json
++++ b/server/item/recipe/item_tags.json
+@@ -65,6 +65,9 @@
+         "minecraft:charcoal",
+         "minecraft:coal"
+     ],
++    "minecraft:copper_tier": [
++        "minecraft:copper_spear"
++    ],
+     "minecraft:crimson_stems": [
+         "minecraft:crimson_hyphae",
+         "minecraft:crimson_stem",
+@@ -106,6 +109,7 @@
+         "minecraft:diamond_leggings",
+         "minecraft:diamond_pickaxe",
+         "minecraft:diamond_shovel",
++        "minecraft:diamond_spear",
+         "minecraft:diamond_sword",
+         "minecraft:mace"
+     ],
+@@ -167,6 +171,7 @@
+         "minecraft:golden_leggings",
+         "minecraft:golden_pickaxe",
+         "minecraft:golden_shovel",
++        "minecraft:golden_spear",
+         "minecraft:golden_sword"
+     ],
+     "minecraft:hanging_actor": [
+@@ -201,6 +206,7 @@
+         "minecraft:iron_leggings",
+         "minecraft:iron_pickaxe",
+         "minecraft:iron_shovel",
++        "minecraft:iron_spear",
+         "minecraft:iron_sword"
+     ],
+     "minecraft:is_armor": [
+@@ -335,6 +341,15 @@
+         "minecraft:stone_shovel",
+         "minecraft:wooden_shovel"
+     ],
++    "minecraft:is_spear": [
++        "minecraft:copper_spear",
++        "minecraft:diamond_spear",
++        "minecraft:golden_spear",
++        "minecraft:iron_spear",
++        "minecraft:netherite_spear",
++        "minecraft:stone_spear",
++        "minecraft:wooden_spear"
++    ],
+     "minecraft:is_sword": [
+         "minecraft:diamond_sword",
+         "minecraft:golden_sword",
+@@ -510,6 +525,7 @@
+         "minecraft:netherite_leggings",
+         "minecraft:netherite_pickaxe",
+         "minecraft:netherite_shovel",
++        "minecraft:netherite_spear",
+         "minecraft:netherite_sword"
+     ],
+     "minecraft:planks": [
+@@ -662,6 +678,7 @@
+         "minecraft:stone_hoe",
+         "minecraft:stone_pickaxe",
+         "minecraft:stone_shovel",
++        "minecraft:stone_spear",
+         "minecraft:stone_sword"
+     ],
+     "minecraft:stone_tool_materials": [
+@@ -684,6 +701,7 @@
+         "minecraft:diamond_leggings",
+         "minecraft:diamond_pickaxe",
+         "minecraft:diamond_shovel",
++        "minecraft:diamond_spear",
+         "minecraft:diamond_sword",
+         "minecraft:golden_boots"
+     ],
+@@ -806,6 +824,7 @@
+         "minecraft:wooden_hoe",
+         "minecraft:wooden_pickaxe",
+         "minecraft:wooden_shovel",
++        "minecraft:wooden_spear",
+         "minecraft:wooden_sword"
+     ],
+     "minecraft:wool": [
+diff --git a/server/item/register.go b/server/item/register.go
+index 786af85753..f4d1a9ac19 100644
+--- a/server/item/register.go
++++ b/server/item/register.go
+@@ -158,6 +158,7 @@ func init() {
+ 		world.RegisterItem(Axe{Tier: t})
+ 		world.RegisterItem(Shovel{Tier: t})
+ 		world.RegisterItem(Sword{Tier: t})
++		world.RegisterItem(Spear{Tier: t})
+ 		world.RegisterItem(Hoe{Tier: t})
+ 	}
+ 	for _, disc := range sound.MusicDiscs() {
+diff --git a/server/item/spear.go b/server/item/spear.go
+new file mode 100644
+index 0000000000..a4bdbd0ef9
+--- /dev/null
++++ b/server/item/spear.go
+@@ -0,0 +1,212 @@
++package item
++
++import (
++	"time"
++
++	"github.com/df-mc/dragonfly/server/world"
++)
++
++const (
++	spearHitboxMargin               = 0.125
++	spearMinAttackRange             = 2
++	spearMaxAttackRange             = 4.5
++	spearCreativeMaxAttackRange     = 7.5
++	spearChargeDamageRequirement    = 4.6
++	spearChargeKnockbackRequirement = 5.1
++)
++
++// Spear is a tiered melee weapon with longer reach and a charge attack.
++type Spear struct {
++	// Tier is the tier of the spear.
++	Tier ToolTier
++}
++
++// AttackDamage returns the jab attack damage of the spear.
++func (s Spear) AttackDamage() float64 {
++	return s.Tier.BaseAttackDamage
++}
++
++// MaxCount always returns 1.
++func (s Spear) MaxCount() int {
++	return 1
++}
++
++// ToolType returns the tool type for spears.
++func (s Spear) ToolType() ToolType {
++	return TypeSpear
++}
++
++// HarvestLevel returns the harvest level of the spear tier.
++func (s Spear) HarvestLevel() int {
++	return s.Tier.HarvestLevel
++}
++
++// BaseMiningEfficiency always returns 1.
++func (s Spear) BaseMiningEfficiency(world.Block) float64 {
++	return 1
++}
++
++// DurabilityInfo ...
++func (s Spear) DurabilityInfo() DurabilityInfo {
++	return DurabilityInfo{
++		MaxDurability:    s.Tier.Durability + 1,
++		BrokenItem:       simpleItem(Stack{}),
++		AttackDurability: 1,
++	}
++}
++
++// SmeltInfo ...
++func (s Spear) SmeltInfo() SmeltInfo {
++	switch s.Tier {
++	case ToolTierIron:
++		return newOreSmeltInfo(NewStack(IronNugget{}, 1), 0.1)
++	case ToolTierGold:
++		return newOreSmeltInfo(NewStack(GoldNugget{}, 1), 0.1)
++	case ToolTierCopper:
++		return newOreSmeltInfo(NewStack(CopperNugget{}, 1), 0.1)
++	}
++	return SmeltInfo{}
++}
++
++// FuelInfo ...
++func (s Spear) FuelInfo() FuelInfo {
++	if s.Tier == ToolTierWood {
++		return newFuelInfo(time.Second * 10)
++	}
++	return FuelInfo{}
++}
++
++// RepairableBy ...
++func (s Spear) RepairableBy(i Stack) bool {
++	return toolTierRepairable(s.Tier)(i)
++}
++
++// EnchantmentValue ...
++func (s Spear) EnchantmentValue() int {
++	return s.Tier.EnchantmentValue
++}
++
++// Cooldown returns the forced jab cooldown of the spear.
++func (s Spear) Cooldown() time.Duration {
++	switch s.Tier {
++	case ToolTierWood:
++		return ticks(13)
++	case ToolTierStone:
++		return ticks(15)
++	case ToolTierCopper:
++		return ticks(17)
++	case ToolTierGold, ToolTierIron:
++		return ticks(19)
++	case ToolTierDiamond:
++		return ticks(21)
++	case ToolTierNetherite:
++		return ticks(23)
++	}
++	return 0
++}
++
++// CooldownCategory returns the shared cooldown category for all spear tiers.
++func (s Spear) CooldownCategory() string {
++	return "spear"
++}
++
++// AttackRange returns the minimum and maximum jab range of the spear.
++func (s Spear) AttackRange(creative bool) (minRange, maxRange float64) {
++	if creative {
++		return spearMinAttackRange, spearCreativeMaxAttackRange
++	}
++	return spearMinAttackRange, spearMaxAttackRange
++}
++
++// HitboxMargin returns the amount target hitboxes are inflated for spear attacks.
++func (s Spear) HitboxMargin() float64 {
++	return spearHitboxMargin
++}
++
++// ChargeMultiplier returns the charge attack damage multiplier of the spear.
++func (s Spear) ChargeMultiplier() float64 {
++	switch s.Tier {
++	case ToolTierWood, ToolTierGold:
++		return 0.7
++	case ToolTierStone, ToolTierCopper:
++		return 0.82
++	case ToolTierIron:
++		return 0.95
++	case ToolTierDiamond:
++		return 1.075
++	case ToolTierNetherite:
++		return 1.2
++	}
++	return 0
++}
++
++// ChargeDamageSpeedRequirement returns the relative blocks-per-second speed needed for charge damage.
++func (s Spear) ChargeDamageSpeedRequirement() float64 {
++	return spearChargeDamageRequirement
++}
++
++// ChargeKnockbackSpeedRequirement returns the attacker blocks-per-second speed needed for charge knockback.
++func (s Spear) ChargeKnockbackSpeedRequirement() float64 {
++	return spearChargeKnockbackRequirement
++}
++
++// ChargeAttack returns whether a charge attack may deal damage and knockback for the charge duration.
++func (s Spear) ChargeAttack(duration time.Duration) (damage, knockback bool) {
++	delay, stage1, stage2, stage3 := s.chargeTimings()
++	if duration < delay {
++		return false, false
++	}
++	elapsed := duration - delay
++	switch {
++	case elapsed < stage1:
++		return true, true
++	case elapsed < stage1+stage2:
++		return true, true
++	case elapsed < stage1+stage2+stage3:
++		return true, false
++	default:
++		return false, false
++	}
++}
++
++// Charge ...
++func (s Spear) Charge(Releaser, *world.Tx, *UseContext, time.Duration) bool {
++	return false
++}
++
++// ContinueCharge ...
++func (s Spear) ContinueCharge(Releaser, *world.Tx, *UseContext, time.Duration) {}
++
++// ReleaseCharge ...
++func (s Spear) ReleaseCharge(Releaser, *world.Tx, *UseContext) bool {
++	return false
++}
++
++// EncodeItem ...
++func (s Spear) EncodeItem() (name string, meta int16) {
++	return "minecraft:" + s.Tier.Name + "_spear", 0
++}
++
++func (s Spear) chargeTimings() (delay, stage1, stage2, stage3 time.Duration) {
++	switch s.Tier {
++	case ToolTierWood:
++		return ticks(15), time.Second * 5, time.Second * 5, time.Second * 5
++	case ToolTierGold:
++		return ticks(14), ticks(70), time.Second * 5, ticks(105)
++	case ToolTierStone:
++		return ticks(14), ticks(90), ticks(90), ticks(95)
++	case ToolTierCopper:
++		return ticks(13), time.Second * 4, ticks(85), ticks(85)
++	case ToolTierIron:
++		return ticks(12), ticks(50), ticks(85), ticks(90)
++	case ToolTierDiamond:
++		return ticks(10), time.Second * 3, ticks(70), ticks(70)
++	case ToolTierNetherite:
++		return ticks(8), ticks(50), time.Second * 3, ticks(65)
++	}
++	return 0, 0, 0, 0
++}
++
++func ticks(t int64) time.Duration {
++	return time.Duration(t) * time.Second / 20
++}
+diff --git a/server/item/tool.go b/server/item/tool.go
+index ff8f010aab..1a89547954 100644
+--- a/server/item/tool.go
++++ b/server/item/tool.go
+@@ -19,6 +19,8 @@ var (
+ 	TypeShears = ToolType{4}
+ 	// TypeSword is the ToolType for swords.
+ 	TypeSword = ToolType{5}
++	// TypeSpear is the ToolType for spears.
++	TypeSpear = ToolType{6}
+ 
+ 	// ToolTierWood is the ToolTier of wood tools. This is the lowest possible tier.
+ 	ToolTierWood = ToolTier{HarvestLevel: 1, Durability: 59, BaseMiningEfficiency: 2, BaseAttackDamage: 1, EnchantmentValue: 15, Name: "wooden"}
+diff --git a/server/player/conf.go b/server/player/conf.go
+index 194156c0d9..f61299aaf4 100644
+--- a/server/player/conf.go
++++ b/server/player/conf.go
+@@ -67,6 +67,7 @@ func (cfg Config) Apply(data *world.EntityData) {
+ 		effects:             entity.NewEffectManager(conf.Effects...),
+ 		locale:              conf.Locale,
+ 		cooldowns:           make(map[string]time.Time),
++		spearChargeHits:     make(map[uuid.UUID]time.Time),
+ 		mc:                  &entity.MovementComputer{Gravity: 0.08, Drag: 0.02, DragBeforeGravity: true},
+ 		heldSlot:            &slot,
+ 		gameMode:            conf.GameMode,
+diff --git a/server/player/player.go b/server/player/player.go
+index d3c535fc3a..d68c20af1f 100644
+--- a/server/player/player.go
++++ b/server/player/player.go
+@@ -15,6 +15,7 @@ import (
+ 
+ 	"github.com/df-mc/dragonfly/server/block"
+ 	"github.com/df-mc/dragonfly/server/block/cube"
++	"github.com/df-mc/dragonfly/server/block/cube/trace"
+ 	"github.com/df-mc/dragonfly/server/block/model"
+ 	"github.com/df-mc/dragonfly/server/cmd"
+ 	"github.com/df-mc/dragonfly/server/entity"
+@@ -71,7 +72,8 @@ type playerData struct {
+ 	airSupplyTicks    int
+ 	maxAirSupplyTicks int
+ 
+-	cooldowns map[string]time.Time
++	cooldowns       map[string]time.Time
++	spearChargeHits map[uuid.UUID]time.Time
+ 
+ 	speed               float64
+ 	flightSpeed         float64
+@@ -1456,13 +1458,13 @@ func (p *Player) HasCooldown(item world.Item) bool {
+ 	if item == nil {
+ 		return false
+ 	}
+-	name, _ := item.EncodeItem()
+-	otherTime, ok := p.cooldowns[name]
++	key := cooldownKey(item)
++	otherTime, ok := p.cooldowns[key]
+ 	if !ok {
+ 		return false
+ 	}
+ 	if time.Now().After(otherTime) {
+-		delete(p.cooldowns, name)
++		delete(p.cooldowns, key)
+ 		return false
+ 	}
+ 	return true
+@@ -1473,27 +1475,37 @@ func (p *Player) SetCooldown(item world.Item, cooldown time.Duration) {
+ 	if item == nil {
+ 		return
+ 	}
+-	name, _ := item.EncodeItem()
+-	p.cooldowns[name] = time.Now().Add(cooldown)
++	p.cooldowns[cooldownKey(item)] = time.Now().Add(cooldown)
+ 	p.session().ViewItemCooldown(item, cooldown)
+ }
+ 
++func cooldownKey(it world.Item) string {
++	if c, ok := it.(interface{ CooldownCategory() string }); ok {
++		return c.CooldownCategory()
++	}
++	name, _ := it.EncodeItem()
++	return name
++}
++
+ // UseItem uses the item currently held in the player's main hand in the air. Generally, nothing happens,
+ // unless the held item implements the item.Usable interface, in which case it will be activated.
+ // This generally happens for items such as throwable items like snowballs.
+ func (p *Player) UseItem() {
+ 	i, _ := p.HeldItems()
++	it := i.Item()
++	_, spear := it.(item.Spear)
+ 	ctx := event.C(p)
+-	if p.HasCooldown(i.Item()) {
++	if !spear && p.HasCooldown(it) {
+ 		return
+ 	}
+ 	if p.Handler().HandleItemUse(ctx); ctx.Cancelled() {
+ 		return
+ 	}
+ 	i, left := p.HeldItems()
+-	it := i.Item()
++	it = i.Item()
++	_, spear = it.(item.Spear)
+ 
+-	if cd, ok := it.(item.Cooldown); ok {
++	if cd, ok := it.(item.Cooldown); ok && !spear {
+ 		p.SetCooldown(it, cd.Cooldown())
+ 	}
+ 
+@@ -1746,26 +1758,75 @@ func (p *Player) UseItemOnEntity(e world.Entity) bool {
+ 	return true
+ }
+ 
++// UseItemAsAttack performs a use-as-attack action with the item held in the main hand.
++func (p *Player) UseItemAsAttack() bool {
++	if held, _ := p.HeldItems(); !held.Empty() {
++		if _, ok := held.Item().(item.Spear); ok {
++			return p.attackWithSpear()
++		}
++	}
++	p.PunchAir()
++	return true
++}
++
+ // AttackEntity uses the item held in the main hand of the player to attack the entity passed, provided it is
+ // within range of the player.
+ // The damage dealt to the entity will depend on the item held by the player and any effects the player may
+ // have.
+ // If the player cannot reach the entity at its position, the method returns immediately.
+ func (p *Player) AttackEntity(e world.Entity) bool {
++	if held, _ := p.HeldItems(); !held.Empty() {
++		if _, ok := held.Item().(item.Spear); ok {
++			return p.attackWithSpear()
++		}
++	}
+ 	if !p.canReach(e.Position()) {
+ 		return false
+ 	}
++	valid, hit := p.attackEntity(e, true)
++	if !valid {
++		return false
++	}
++	p.SwingArm()
++	if !hit {
++		return false
++	}
++	p.damageHeldItem()
++	return true
++}
++
++func (p *Player) attackWithSpear() bool {
++	held, _ := p.HeldItems()
++	spear, ok := held.Item().(item.Spear)
++	if !ok || p.HasCooldown(held.Item()) || p.Dead() || !p.GameMode().AllowsInteraction() {
++		return false
++	}
++	p.SwingArm()
++	p.SetCooldown(held.Item(), spear.Cooldown())
+ 
++	hits := 0
++	for _, target := range p.spearJabTargets(spear) {
++		if valid, hit := p.attackEntity(target.e, false); valid && hit {
++			hits++
++		}
++	}
++	if hits > 0 {
++		p.damageHeldItem()
++	}
++	return true
++}
++
++func (p *Player) attackEntity(e world.Entity, criticalAllowed bool) (valid, hit bool) {
+ 	living, isLiving := e.(entity.Living)
+ 	if isLiving && living.Dead() {
+-		return false
++		return false, false
+ 	}
+ 
+ 	var (
+ 		force, height  = 0.45, 0.3608
+ 		_, slowFalling = p.Effect(effect.SlowFalling)
+ 		_, blind       = p.Effect(effect.Blindness)
+-		critical       = !p.Sprinting() && !p.Flying() && p.FallDistance() > 0 && !slowFalling && !blind
++		critical       = criticalAllowed && !p.Sprinting() && !p.Flying() && p.FallDistance() > 0 && !slowFalling && !blind
+ 	)
+ 
+ 	i, _ := p.HeldItems()
+@@ -1777,12 +1838,11 @@ func (p *Player) AttackEntity(e world.Entity) bool {
+ 
+ 	ctx := event.C(p)
+ 	if p.Handler().HandleAttackEntity(ctx, e, &force, &height, &critical); ctx.Cancelled() {
+-		return false
++		return false, false
+ 	}
+-	p.SwingArm()
+ 
+ 	if !isLiving {
+-		return false
++		return true, false
+ 	}
+ 
+ 	dmg := i.AttackDamage()
+@@ -1803,15 +1863,10 @@ func (p *Player) AttackEntity(e world.Entity) bool {
+ 	}
+ 
+ 	n, vulnerable := living.Hurt(dmg, entity.AttackDamageSource{Attacker: p})
+-	i, left := p.HeldItems()
+-
+-	if durable, ok := i.Item().(item.Durable); ok {
+-		p.SetHeldItems(p.damageItem(i, durable.DurabilityInfo().AttackDurability), left)
+-	}
+ 
+ 	p.tx.PlaySound(entity.EyePosition(e), sound.Attack{Damage: !mgl64.FloatEqual(n, 0)})
+ 	if !vulnerable {
+-		return true
++		return true, true
+ 	}
+ 	if critical {
+ 		for _, v := range p.tx.Viewers(living.Position()) {
+@@ -1828,9 +1883,182 @@ func (p *Player) AttackEntity(e world.Entity) bool {
+ 			flammable.SetOnFire(enchantment.FireAspect.Duration(f.Level()))
+ 		}
+ 	}
++	return true, true
++}
++
++func (p *Player) damageHeldItem() {
++	i, left := p.HeldItems()
++	if durable, ok := i.Item().(item.Durable); ok {
++		p.SetHeldItems(p.damageItem(i, durable.DurabilityInfo().AttackDurability), left)
++	}
++}
++
++type spearTarget struct {
++	e        world.Entity
++	distance float64
++}
++
++func (p *Player) spearJabTargets(spear item.Spear) []spearTarget {
++	start := entity.EyePosition(p)
++	_, maxRange := spear.AttackRange(p.GameMode().CreativeInventory())
++	end := start.Add(p.Rotation().Vec3().Mul(maxRange))
++	// EntitiesWithin filters entity positions, so use a broad candidate box and let BBoxIntercept below perform
++	// the exact spear hitbox check.
++	search := cube.Box(start[0], start[1], start[2], end[0], end[1], end[2]).Grow(8)
++	minRange, _ := spear.AttackRange(p.GameMode().CreativeInventory())
++	blockDistance, blocked := p.spearJabBlockDistance(start, end)
++
++	var targets []spearTarget
++	for e := range p.tx.EntitiesWithin(search) {
++		if e.H() == p.H() {
++			continue
++		}
++		bb := e.H().Type().BBox(e).Translate(e.Position()).Grow(spear.HitboxMargin())
++		result, ok := trace.BBoxIntercept(bb, start, end)
++		if !ok {
++			continue
++		}
++		distance := result.Position().Sub(start).Len()
++		if distance < minRange || distance > maxRange || (blocked && distance > blockDistance) {
++			continue
++		}
++		targets = append(targets, spearTarget{e: e, distance: distance})
++	}
++	slices.SortFunc(targets, func(a, b spearTarget) int {
++		switch {
++		case a.distance < b.distance:
++			return -1
++		case a.distance > b.distance:
++			return 1
++		default:
++			return 0
++		}
++	})
++	return targets
++}
++
++func (p *Player) spearJabBlockDistance(start, end mgl64.Vec3) (float64, bool) {
++	var (
++		distance float64
++		blocked  bool
++	)
++	trace.TraverseBlocks(start, end, func(pos cube.Pos) bool {
++		result, ok := trace.BlockIntercept(pos, p.tx, p.tx.Block(pos), start, end)
++		if !ok {
++			return true
++		}
++		distance = result.Position().Sub(start).Len()
++		blocked = true
++		return false
++	})
++	return distance, blocked
++}
++
++func (p *Player) tickSpearCharge(spear item.Spear) {
++	damageStage, knockbackStage := spear.ChargeAttack(p.useDuration())
++	if !damageStage && !knockbackStage {
++		return
++	}
++
++	vel := p.Velocity()
++	box := p.H().Type().BBox(p).Translate(p.Position()).Grow(spear.HitboxMargin()).Extend(vel.Mul(-1))
++	attackerSpeed := vel.Len() * 20
++	now := time.Now()
++	for id, until := range p.spearChargeHits {
++		if now.After(until) {
++			delete(p.spearChargeHits, id)
++		}
++	}
++
++	for e := range p.tx.EntitiesWithin(box) {
++		if e.H() == p.H() {
++			continue
++		}
++		living, ok := e.(entity.Living)
++		if !ok || living.Dead() {
++			continue
++		}
++		targetBox := e.H().Type().BBox(e).Translate(e.Position()).Grow(spear.HitboxMargin())
++		if !targetBox.IntersectsWith(box) {
++			continue
++		}
++
++		relativeSpeed := vel.Sub(entityVelocity(e)).Len() * 20
++		damage := damageStage && relativeSpeed >= spear.ChargeDamageSpeedRequirement()
++		knockback := knockbackStage && attackerSpeed >= spear.ChargeKnockbackSpeedRequirement()
++		if !damage && !knockback {
++			continue
++		}
++		if until, ok := p.spearChargeHits[e.H().UUID()]; ok && now.Before(until) {
++			continue
++		}
++		if p.spearChargeEntity(living, spear, damage, knockback, relativeSpeed) {
++			p.spearChargeHits[e.H().UUID()] = now.Add(time.Second / 2)
++		}
++	}
++}
++
++func (p *Player) spearChargeEntity(living entity.Living, spear item.Spear, damage, knockback bool, relativeSpeed float64) bool {
++	var (
++		force, height = 0.45, 0.3608
++		critical      = false
++	)
++	ctx := event.C(p)
++	if p.Handler().HandleAttackEntity(ctx, living, &force, &height, &critical); ctx.Cancelled() {
++		return false
++	}
++
++	vulnerable := true
++	if damage {
++		n, ok := living.Hurt(relativeSpeed*spear.ChargeMultiplier(), entity.AttackDamageSource{Attacker: p})
++		vulnerable = ok
++		p.tx.PlaySound(entity.EyePosition(living), sound.Attack{Damage: !mgl64.FloatEqual(n, 0)})
++		if !mgl64.FloatEqual(n, 0) {
++			p.damageHeldItem()
++			for _, viewer := range p.tx.Viewers(living.Position()) {
++				viewer.ViewEntityAction(living, entity.CriticalHitAction{})
++			}
++			if f, ok := p.spearFireAspect(); ok {
++				if flammable, ok := living.(entity.Flammable); ok {
++					flammable.SetOnFire(enchantment.FireAspect.Duration(f.Level()))
++				}
++			}
++		}
++	} else {
++		p.tx.PlaySound(entity.EyePosition(living), sound.Attack{})
++	}
++	if !vulnerable {
++		return true
++	}
++	if knockback {
++		if damage {
++			if k, ok := p.spearKnockback(); ok {
++				force += enchantment.Knockback.Force(k.Level())
++			}
++		}
++		living.KnockBack(p.Position(), force, height)
++	}
++	p.Exhaust(0.1)
+ 	return true
+ }
+ 
++func (p *Player) spearFireAspect() (item.Enchantment, bool) {
++	held, _ := p.HeldItems()
++	return held.Enchantment(enchantment.FireAspect)
++}
++
++func (p *Player) spearKnockback() (item.Enchantment, bool) {
++	held, _ := p.HeldItems()
++	return held.Enchantment(enchantment.Knockback)
++}
++
++func entityVelocity(e world.Entity) mgl64.Vec3 {
++	if v, ok := e.(interface{ Velocity() mgl64.Vec3 }); ok {
++		return v.Velocity()
++	}
++	return mgl64.Vec3{}
++}
++
+ // StartBreaking makes the player start breaking the block at the position passed using the item currently
+ // held in its main hand.
+ // If no block is present at the position, or if the block is out of range, StartBreaking will return
+@@ -1856,6 +2084,9 @@ func (p *Player) StartBreaking(pos cube.Pos, face cube.Face) {
+ 	}
+ 
+ 	held, _ := p.HeldItems()
++	if _, ok := held.Item().(item.Spear); ok {
++		return
++	}
+ 	if _, ok := held.Item().(item.Sword); ok && p.GameMode().CreativeInventory() {
+ 		// Can't break blocks with a sword in creative mode.
+ 		return
+@@ -2549,6 +2780,9 @@ func (p *Player) Tick(tx *world.Tx, current int64) {
+ 	}
+ 
+ 	if p.usingItem {
++		if spear, ok := held.Item().(item.Spear); ok {
++			p.tickSpearCharge(spear)
++		}
+ 		if c, ok := held.Item().(item.Chargeable); ok {
+ 			c.ContinueCharge(p, tx, p.useContext(), p.useDuration())
+ 		}
+diff --git a/server/session/controllable.go b/server/session/controllable.go
+index 8a924bf60d..cc4cbdc75c 100644
+--- a/server/session/controllable.go
++++ b/server/session/controllable.go
+@@ -53,6 +53,7 @@ type Controllable interface {
+ 	Effects() []effect.Effect
+ 
+ 	UseItem()
++	UseItemAsAttack() bool
+ 	ReleaseItem()
+ 	UseItemOnBlock(pos cube.Pos, face cube.Face, clickPos mgl64.Vec3)
+ 	UseItemOnEntity(e world.Entity) bool
+diff --git a/server/session/handler_inventory_transaction.go b/server/session/handler_inventory_transaction.go
+index 9cb4c3820a..e487fc6c30 100644
+--- a/server/session/handler_inventory_transaction.go
++++ b/server/session/handler_inventory_transaction.go
+@@ -192,6 +192,12 @@ func (h *InventoryTransactionHandler) handleUseItemTransaction(data *protocol.Us
+ 		c.UseItemOnBlock(pos, cube.Face(data.BlockFace), vec32To64(data.ClickedPosition))
+ 	case protocol.UseItemActionClickAir:
+ 		c.UseItem()
++	case protocol.UseItemActionUseAsAttack:
++		if !c.UseItemAsAttack() {
++			slot := int(*s.heldSlot)
++			it, _ := s.inv.Item(slot)
++			s.sendItem(it, slot, protocol.WindowIDInventory)
++		}
+ 	default:
+ 		return fmt.Errorf("unhandled UseItem ActionType %v", data.ActionType)
+ 	}
+diff --git a/server/session/world.go b/server/session/world.go
+index 1ecdfb728e..63da503d97 100644
+--- a/server/session/world.go
++++ b/server/session/world.go
+@@ -326,8 +326,12 @@ func (s *Session) ViewEntityArmour(e world.Entity) {
+ // ViewItemCooldown ...
+ func (s *Session) ViewItemCooldown(item world.Item, duration time.Duration) {
+ 	name, _ := item.EncodeItem()
++	category := strings.Split(name, ":")[1]
++	if c, ok := item.(interface{ CooldownCategory() string }); ok {
++		category = c.CooldownCategory()
++	}
+ 	s.writePacket(&packet.ClientStartItemCooldown{
+-		Category: strings.Split(name, ":")[1],
++		Category: category,
+ 		Duration: int32(duration.Milliseconds() / 50),
+ 	})
+ }
