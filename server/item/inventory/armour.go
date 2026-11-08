@@ -122,7 +122,6 @@ func (a *Armour) DamageReduction(dmg float64, src world.DamageSource) float64 {
 		}
 	}
 
-	dmg -= dmg * enchantment.ProtectionFactor(src, enchantments)
 	if src.ReducedByArmour() {
 		// Armour in Bedrock edition reduces the damage taken by 4% for each effective armour point. Effective
 		// armour point decreases as damage increases, with 1 point lost for every 2 HP of damage. The defence
@@ -136,6 +135,11 @@ func (a *Armour) DamageReduction(dmg float64, src world.DamageSource) float64 {
 		}
 		dmg -= dmg * reduction
 	}
+	// Enchantments are applied after armour, on the damage that remains. The armour
+	// formula above must see the raw damage: applying protection first would shrink
+	// the damage the armour formula uses and make armour far more effective than it
+	// is in vanilla, so big hits (such as end crystals) would deal much less damage.
+	dmg -= dmg * enchantment.ProtectionFactor(src, enchantments)
 	return original - dmg
 }
 

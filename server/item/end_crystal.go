@@ -15,26 +15,29 @@ type endCrystalSupport interface {
 }
 
 // UseOnBlock places an End crystal on top of the clicked block if it is
-// obsidian or bedrock, the two blocks above it are air and no other entities
-// intersect the space the crystal is placed in. The face clicked is ignored.
+// obsidian or bedrock, the block above it is air and no entities intersect the
+// space the crystal is placed in. The face clicked is ignored, and neighbouring
+// blocks never matter: only the support block and the space above it do.
 func (e EndCrystal) UseOnBlock(pos cube.Pos, _ cube.Face, _ mgl64.Vec3, tx *world.Tx, _ User, ctx *UseContext) bool {
 	support, ok := tx.Block(pos).(endCrystalSupport)
 	if !ok || !support.SupportsEndCrystal() {
 		return false
 	}
 
-	above, twoAbove := pos.Side(cube.FaceUp), pos.Side(cube.FaceUp).Side(cube.FaceUp)
-	if above.OutOfBounds(tx.Range()) || twoAbove.OutOfBounds(tx.Range()) {
+	above := pos.Side(cube.FaceUp)
+	if above.OutOfBounds(tx.Range()) {
 		return false
 	}
-	if tx.Block(above) != air() || tx.Block(twoAbove) != air() {
+	// Like vanilla, only the block directly above the support block has to be
+	// empty. The crystal is allowed to overlap solid blocks higher up.
+	if tx.Block(above) != air() {
 		return false
 	}
 
-	// Vanilla anchors the entity check at the clicked block, spanning it and the
-	// air block above. Any intersecting entity blocks placement, including the
-	// placing player.
-	box := cube.Box(0, 0, 0, 1, 2, 1).Translate(pos.Vec3())
+	// Vanilla anchors the entity check at the block above the support block and
+	// spans two blocks upwards. Any intersecting entity blocks placement,
+	// including the placing player.
+	box := cube.Box(0, 0, 0, 1, 2, 1).Translate(above.Vec3())
 	for entity := range tx.EntitiesWithin(box.Grow(2)) {
 		if entity.H().Type().BBox(entity).Translate(entity.Position()).IntersectsWith(box) {
 			return false
