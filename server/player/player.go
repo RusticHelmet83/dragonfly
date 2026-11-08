@@ -2128,6 +2128,12 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	p.delayShieldAfterAttack()
 
 	if !isLiving {
+		// Hitting a deflectable projectile, such as a wind charge, knocks it back in
+		// the direction the player is looking and makes the player its owner.
+		if entity.DeflectProjectile(e, p, p.Rotation().Vec3()) {
+			p.tx.PlaySound(e.Position(), sound.Attack{Damage: true})
+			return true
+		}
 		if !entity.DamageableEntity(e) {
 			return false
 		}

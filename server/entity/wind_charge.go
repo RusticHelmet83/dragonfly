@@ -29,11 +29,12 @@ func NewWindCharge(opts world.EntitySpawnOpts, owner world.Entity) *world.Entity
 }
 
 var windChargeConf = ProjectileBehaviourConfig{
-	Gravity:    0,
-	Drag:       0,
-	Damage:     -1,
-	Collidable: true,
-	Hit:        windChargeHit,
+	Gravity:     0,
+	Drag:        0,
+	Damage:      -1,
+	Collidable:  true,
+	Deflectable: true,
+	Hit:         windChargeHit,
 }
 
 // WindChargeType is a world.EntityType implementation for wind charges.
@@ -53,6 +54,33 @@ func (windChargeType) DecodeNBT(_ map[string]any, data *world.EntityData) {
 	data.Data = windChargeConf.New()
 }
 func (windChargeType) EncodeNBT(*world.EntityData) map[string]any { return nil }
+
+// DeflectProjectile redirects a Deflectable projectile, such as a wind charge,
+// that was attacked by the entity by. The projectile keeps its current speed but
+// now flies in the direction dir (normally the look direction of by), and by
+// becomes its new owner, like hitting a ghast's fireball back. It returns false
+// and does nothing if e is not a Deflectable projectile that is still in flight.
+func DeflectProjectile(e world.Entity, by world.Entity, dir mgl64.Vec3) bool {
+	ent, ok := e.(*Ent)
+	if !ok || ent.H().Closed() {
+		return false
+	}
+	b, ok := ent.Behaviour().(*ProjectileBehaviour)
+	if !ok || !b.conf.Deflectable || b.collided || b.close {
+		return false
+	}
+	speed := ent.Velocity().Len()
+	if speed == 0 || dir.LenSqr() == 0 {
+		return false
+	}
+	ent.SetVelocity(dir.Normalize().Mul(speed))
+	b.conf.Owner = by.H()
+	// The deflected projectile may hit entities it already passed again, and its
+	// new owner is ignored for the first few ticks so it cannot hit them.
+	b.collidedEntities = nil
+	ent.data.Age = 0
+	return true
+}
 
 // windChargeHit is called when a wind charge hits a block or an entity.
 func windChargeHit(e *Ent, tx *world.Tx, target trace.Result) {

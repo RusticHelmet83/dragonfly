@@ -117,6 +117,10 @@ type ProjectileBehaviourConfig struct {
 	// passed through by every other projectile. If set, the Hit function is
 	// called with a trace.EntityResult whose Entity is the other projectile.
 	Collidable bool
+	// Deflectable specifies if the projectile can be knocked back by attacking
+	// it, like hitting a ghast's fireball. See DeflectProjectile. Unlike a
+	// damageable entity, other projectiles still fly straight through it.
+	Deflectable bool
 }
 
 func (conf ProjectileBehaviourConfig) Apply(data *world.EntityData) {
