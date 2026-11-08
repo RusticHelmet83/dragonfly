@@ -10,16 +10,16 @@ import (
 )
 
 // WindChargeThrowSpeed is the launch speed of a thrown wind charge in blocks
-// per tick. Vanilla uses 1.5. The Versai fork uses 2.6, slightly above the
+// per tick. Vanilla uses 1.5. The Versai fork uses 2.5, slightly above the
 // custom ender pearl throw speed (practice/handler: Rotation.Vec3() * 2.35).
 // Wind charges have no gravity and no drag, so this is also their constant
 // speed for the whole flight. Because the pearl is thrown first, the charge
 // starts behind it and has to make up the head start; the pearl slows down
 // from drag and falls from gravity, so a slightly faster charge can catch it.
-// Simulated: at 2.6 a charge thrown up to ~8 ticks after a pearl can catch it
-// at 30 degrees upward, and about 5 ticks after at 20 degrees. 2.35 only
-// manages that for shallow angles with a gap of ~3 ticks or less.
-var WindChargeThrowSpeed = 2.6
+// Simulated: at 2.5 a charge thrown up to ~10 ticks after a pearl can catch it
+// at 30 degrees upward, ~7 ticks at 25 degrees and ~4 ticks at 20 degrees.
+// 2.35 manages 8, 5 and 3 ticks for the same angles.
+var WindChargeThrowSpeed = 2.5
 
 // WindChargeSpread scales the random aiming spread of a thrown wind charge.
 // 1.0 is the vanilla Java uncertainty (0.0172275 per axis, triangle
