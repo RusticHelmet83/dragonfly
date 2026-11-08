@@ -23,9 +23,10 @@ var WindChargeThrowSpeed = 2.5
 
 // WindChargeSpread scales the random aiming spread of a thrown wind charge.
 // 1.0 is the vanilla Java uncertainty (0.0172275 per axis, triangle
-// distributed). Set it to 0 for perfectly deterministic throws, which makes
-// pearl catching consistent.
-var WindChargeSpread = 1.0
+// distributed). The Versai fork sets it to 0 so throws go exactly where the
+// player aims, which makes pearl catching consistent. Set it back to 1.0 to
+// restore vanilla spread.
+var WindChargeSpread = 0.0
 
 // WindCharge is a throwable item that bursts on impact, knocking back every
 // entity close to it and launching the thrower if it stands on top of the burst.
