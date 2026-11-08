@@ -419,7 +419,7 @@ func (lt *ProjectileBehaviour) tickMovement(e *Ent, tx *world.Tx) (*Movement, tr
 		ok  bool
 	)
 	if !mgl64.FloatEqual(end.Sub(pos).LenSqr(), 0) {
-		if hit, ok = trace.Perform(pos, end, tx, e.H().Type().BBox(e).Grow(1.0), lt.ignores(e)); ok {
+		if hit, ok = trace.PerformGrow(pos, end, tx, e.H().Type().BBox(e).Grow(1.0), lt.ignores(e), lt.catchGrow(e)); ok {
 			if _, ok := hit.(trace.BlockResult); ok {
 				// Undo the gravity because the velocity as a result of gravity
 				// at the point of collision should be 0.
@@ -438,6 +438,32 @@ func (lt *ProjectileBehaviour) tickMovement(e *Ent, tx *world.Tx) (*Movement, tr
 		}
 	}
 	return &Movement{v: viewers, e: e, pos: end, vel: vel, dpos: end.Sub(pos), dvel: vel.Sub(velBefore), rot: rot}, hit
+}
+
+// CollidableCatchGrow is how far, in blocks, the hit area of a Collidable
+// projectile is grown on every side when another Collidable projectile of a
+// different type (such as an ender pearl and a wind charge) tries to hit it. The
+// normal hit area is grown by 0.3, so this makes pearl catching more forgiving.
+// Both projectiles move several blocks per tick and are checked one after the
+// other against each other's position, so a perfectly aimed catch can still
+// pass a few tenths of a block wide of the target. Values above ~1.0 may not
+// take full effect. Set it to 0.3 or lower to restore the normal hit area.
+var CollidableCatchGrow = 0.5
+
+// catchGrow returns the function passed to trace.PerformGrow so that a
+// Collidable projectile gets the larger CollidableCatchGrow hit area against
+// other Collidable projectiles it may collide with, and the normal one against
+// everything else. It returns nil for projectiles that are not Collidable.
+func (lt *ProjectileBehaviour) catchGrow(e *Ent) func(world.Entity) float64 {
+	if !lt.conf.Collidable {
+		return nil
+	}
+	return func(other world.Entity) float64 {
+		if lt.collidesWith(e, other) {
+			return CollidableCatchGrow
+		}
+		return 0
+	}
 }
 
 // TriggerHit calls the Hit function of the ProjectileBehaviourConfig, if it

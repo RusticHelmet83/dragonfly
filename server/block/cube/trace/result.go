@@ -24,6 +24,16 @@ type EntityFilter func(iter.Seq[world.Entity]) iter.Seq[world.Entity]
 // ray. The physics.BBox that's passed is used for checking if any entity within the bounding box collided
 // with the ray.
 func Perform(start, end mgl64.Vec3, tx *world.Tx, box cube.BBox, filter EntityFilter) (hit Result, ok bool) {
+	return PerformGrow(start, end, tx, box, filter, nil)
+}
+
+// PerformGrow is like Perform, but grow, if non-nil, is called for every entity
+// the ray may hit and returns how far that entity's bounding box should be
+// grown for the hit test (see EntityInterceptGrow). Returning a value not
+// larger than the default of 0.3 keeps the normal behaviour for that entity.
+// Entities are only considered if they are within the box passed grown by its
+// own size, so grow values above roughly 1.0 may not take full effect.
+func PerformGrow(start, end mgl64.Vec3, tx *world.Tx, box cube.BBox, filter EntityFilter, grow func(world.Entity) float64) (hit Result, ok bool) {
 	// Check if there's any blocks that we may collide with.
 	TraverseBlocks(start, end, func(pos cube.Pos) (cont bool) {
 		b := tx.Block(pos)
@@ -49,7 +59,13 @@ func Perform(start, end mgl64.Vec3, tx *world.Tx, box cube.BBox, filter EntityFi
 			continue
 		}
 		// Check if we collide with the entities bounding box.
-		result, ok := EntityIntercept(entity, start, end)
+		g := defaultEntityGrow
+		if grow != nil {
+			if v := grow(entity); v > g {
+				g = v
+			}
+		}
+		result, ok := EntityInterceptGrow(entity, start, end, g)
 		if !ok {
 			continue
 		}
