@@ -1,0 +1,5 @@
+package sound
+
+// SpearLunge is a sound played when a player lunges forward with a spear that
+// has the Lunge enchantment.
+type SpearLunge struct{ sound }

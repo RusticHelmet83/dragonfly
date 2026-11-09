@@ -15,6 +15,7 @@ import (
 
 	"github.com/df-mc/dragonfly/server/block"
 	"github.com/df-mc/dragonfly/server/block/cube"
+	"github.com/df-mc/dragonfly/server/block/cube/trace"
 	"github.com/df-mc/dragonfly/server/block/model"
 	"github.com/df-mc/dragonfly/server/cmd"
 	"github.com/df-mc/dragonfly/server/entity"
@@ -95,7 +96,8 @@ type playerData struct {
 	airSupplyTicks    int
 	maxAirSupplyTicks int
 
-	cooldowns map[string]time.Time
+	cooldowns       map[string]time.Time
+	spearChargeHits map[uuid.UUID]time.Time
 
 	speed               float64
 	flightSpeed         float64
@@ -1743,12 +1745,13 @@ func (p *Player) HasCooldown(item world.Item) bool {
 	if name == shieldItemName {
 		return p.shieldCooldownActive()
 	}
-	until, ok := p.cooldowns[name]
+	key := cooldownKey(item)
+	until, ok := p.cooldowns[key]
 	if !ok {
 		return false
 	}
 	if time.Now().After(until) {
-		delete(p.cooldowns, name)
+		delete(p.cooldowns, key)
 		return false
 	}
 	return true
@@ -1769,7 +1772,7 @@ func (p *Player) setCooldown(item world.Item, cooldown time.Duration, updateShie
 		// The shield cooldown lives on the tick-based shield state, not in the wall-clock map.
 		p.setShieldCooldown(cooldown)
 	} else {
-		p.cooldowns[name] = time.Now().Add(cooldown)
+		p.cooldowns[cooldownKey(item)] = time.Now().Add(cooldown)
 	}
 	p.session().ViewItemCooldown(item, cooldown)
 	if name == shieldItemName && updateShieldState {
@@ -1779,12 +1782,24 @@ func (p *Player) setCooldown(item world.Item, cooldown time.Duration, updateShie
 	}
 }
 
+// cooldownKey returns the key under which the cooldown of an item is stored. Items that implement
+// CooldownCategory share one cooldown with every other item of the same category (all spear tiers, for example).
+func cooldownKey(it world.Item) string {
+	if c, ok := it.(interface{ CooldownCategory() string }); ok {
+		return c.CooldownCategory()
+	}
+	name, _ := it.EncodeItem()
+	return name
+}
+
 // UseItem uses the item currently held in the player's main hand in the air. Generally, nothing happens,
 // unless the held item implements the item.Usable interface, in which case it will be activated.
 // This generally happens for items such as throwable items like snowballs.
 func (p *Player) UseItem() {
 	i, _ := p.HeldItems()
-	if p.HasCooldown(i.Item()) {
+	// The cooldown of a spear is its jab cooldown, which must not stop the player from starting a charge attack.
+	_, spear := i.Item().(item.Spear)
+	if !spear && p.HasCooldown(i.Item()) {
 		p.startOffHandShieldBlockingInputAfterItemUse()
 		return
 	}
@@ -1794,6 +1809,7 @@ func (p *Player) UseItem() {
 	}
 	i, left := p.HeldItems()
 	it := i.Item()
+	_, spear = it.(item.Spear)
 	if p.startShieldBlockingInput(i) {
 		return
 	}
@@ -1801,7 +1817,7 @@ func (p *Player) UseItem() {
 		p.SetShieldBlockingInput(false)
 	}
 
-	if cd, ok := it.(item.Cooldown); ok {
+	if cd, ok := it.(item.Cooldown); ok && !spear {
 		p.SetCooldown(it, cd.Cooldown())
 	}
 
@@ -2086,10 +2102,23 @@ func (p *Player) UseItemOnEntity(e world.Entity) bool {
 // have.
 // If the player cannot reach the entity at its position, the method returns immediately.
 func (p *Player) AttackEntity(e world.Entity) bool {
+	if held, _ := p.HeldItems(); !held.Empty() {
+		if _, ok := held.Item().(item.Spear); ok {
+			// Spears attack everything in a line in front of the player instead of one entity.
+			return p.attackWithSpear()
+		}
+	}
 	if !p.canReach(e.Position()) {
 		return false
 	}
+	return p.attackEntity(e, false)
+}
 
+// attackEntity attacks the entity passed with the item held in the main hand. If jab is true the attack is
+// part of a spear jab: it can't be a critical hit and doesn't swing the arm again, as attackWithSpear does that
+// once for the whole jab. Like in the Java Edition, a jab always knocks the target back, even if the hit itself
+// wasn't accepted, and damages the held item for every living entity hit.
+func (p *Player) attackEntity(e world.Entity, jab bool) bool {
 	living, isLiving := e.(entity.Living)
 	if isLiving && living.Dead() {
 		return false
@@ -2104,7 +2133,7 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 		force, height  = 0.45, 0.3608
 		_, slowFalling = p.Effect(effect.SlowFalling)
 		_, blind       = p.Effect(effect.Blindness)
-		critical       = !p.Sprinting() && !p.Flying() && p.FallDistance() > 0 && !slowFalling && !blind
+		critical       = !jab && !p.Sprinting() && !p.Flying() && p.FallDistance() > 0 && !slowFalling && !blind
 	)
 
 	i, _ := p.HeldItems()
@@ -2124,7 +2153,9 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if p.Handler().HandleAttackEntity(ctx, e, &force, &height, &critical); ctx.Cancelled() {
 		return false
 	}
-	p.SwingArm()
+	if !jab {
+		p.SwingArm()
+	}
 	p.delayShieldAfterAttack()
 
 	if !isLiving {
@@ -2138,7 +2169,7 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 			return false
 		}
 		i, left := p.HeldItems()
-		if durable, ok := i.Item().(item.Durable); ok {
+		if durable, ok := i.Item().(item.Durable); ok && !jab {
 			p.SetHeldItems(p.damageItem(i, durable.DurabilityInfo().AttackDurability), left)
 		}
 		_, vulnerable, _ := entity.HurtEntity(e, i.AttackDamage(), entity.AttackDamageSource{Attacker: p})
@@ -2225,7 +2256,7 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 			}
 		}
 	}
-	if !result.Accepted() && !totemPopped {
+	if !result.Accepted() && !totemPopped && !jab {
 		return true
 	}
 	if stunSlam {
@@ -2257,6 +2288,303 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 		p.smashEffects(e, force, height, fallDistance, i)
 	}
 	return true
+}
+
+// UseItemAsAttack performs a use-as-attack action with the item held in the main hand. For spears this is a
+// jab, which hits every entity in a line in front of the player. For any other item it only punches the air.
+func (p *Player) UseItemAsAttack() bool {
+	if held, _ := p.HeldItems(); !held.Empty() {
+		if _, ok := held.Item().(item.Spear); ok {
+			return p.attackWithSpear()
+		}
+	}
+	p.PunchAir()
+	return true
+}
+
+// attackWithSpear performs a spear jab: every entity in the line in front of the player within the reach of the
+// spear is attacked and the shared spear cooldown is started. Like in the Java Edition, every living entity in
+// the line costs the spear one durability. If the spear has the Lunge enchantment, the player is propelled
+// forward as well.
+func (p *Player) attackWithSpear() bool {
+	held, _ := p.HeldItems()
+	spear, ok := held.Item().(item.Spear)
+	if !ok || p.HasCooldown(held.Item()) || p.Dead() || !p.GameMode().AllowsInteraction() {
+		return false
+	}
+	p.SwingArm()
+	p.SetCooldown(held.Item(), spear.Cooldown())
+
+	for _, target := range p.spearTargets(spear) {
+		if held, _ := p.HeldItems(); held.Empty() {
+			// The spear broke while hitting one of the previous targets.
+			break
+		}
+		p.attackEntity(target.e, true)
+	}
+	p.spearLunge()
+	return true
+}
+
+// canLunge reports whether the player is currently able to lunge: they must have enough food to sprint (unless
+// they are in creative mode), and can't be gliding or touching water.
+func (p *Player) canLunge() bool {
+	if p.Gliding() || (p.Food() < 7 && !p.GameMode().CreativeInventory()) {
+		return false
+	}
+	pos := p.Position()
+	// Check the feet, the middle and the eyes of the player, as Java Edition checks if any part of the hitbox is
+	// in water.
+	for _, y := range [...]float64{0, p.H().Type().BBox(p).Height() / 2, entity.EyePosition(p)[1] - pos[1]} {
+		if l, ok := p.tx.Liquid(cube.PosFromVec3(pos.Add(mgl64.Vec3{0, y}))); ok {
+			if _, water := l.(block.Water); water {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// spearLunge applies the Lunge enchantment of the spear held in the main hand after a jab. It adds an instant
+// horizontal boost in the direction the player is facing (the vertical part of the look direction is dropped,
+// so looking up or down gives a shorter lunge), costs exhaustion and one additional point of durability.
+func (p *Player) spearLunge() {
+	held, _ := p.HeldItems()
+	l, ok := held.Enchantment(enchantment.Lunge)
+	if !ok || !p.canLunge() {
+		return
+	}
+	dir := p.Rotation().Vec3()
+	boost := enchantment.Lunge.Boost(l.Level())
+	p.SetVelocity(p.Velocity().Add(mgl64.Vec3{dir[0] * boost, 0, dir[2] * boost}))
+	p.Exhaust(enchantment.Lunge.Exhaustion(l.Level()))
+	p.damageHeldItem()
+}
+
+// damageHeldItem damages the held item by its attack durability.
+func (p *Player) damageHeldItem() {
+	i, left := p.HeldItems()
+	if durable, ok := i.Item().(item.Durable); ok {
+		p.SetHeldItems(p.damageItem(i, durable.DurabilityInfo().AttackDurability), left)
+	}
+}
+
+type spearTarget struct {
+	e        world.Entity
+	distance float64
+}
+
+// spearTargets returns all entities in the line in front of the player that the spear passed can reach, closest
+// first. It is used for both jabs and charge attacks and follows the Java Edition: the line starts at the minimum
+// reach of the spear and ends at the maximum reach plus the speed at which the player is moving along their line
+// of sight. A block in the way shortens the line. An entity is hit if the line goes through its hitbox, or
+// through its hitbox inflated by the hitbox margin if nothing solid is between the line and the entity.
+func (p *Player) spearTargets(spear item.Spear) []spearTarget {
+	var (
+		look               = p.Rotation().Vec3()
+		eye                = entity.EyePosition(p)
+		minRange, maxRange = spear.AttackRange(p.GameMode().CreativeInventory())
+		margin             = spear.HitboxMargin()
+		from               = eye.Add(look.Mul(minRange))
+		to                 = eye.Add(look.Mul(maxRange + math.Max(0, p.Velocity().Dot(look))))
+	)
+	if pos, blocked := p.spearBlockHit(eye, to); blocked {
+		if pos.Sub(eye).Len() < minRange {
+			// A block is in the way before the line even starts.
+			return nil
+		}
+		to = pos
+	}
+	// EntitiesWithin filters entity positions, so use a broad candidate box and let spearHit below perform the
+	// exact spear hitbox check.
+	search := cube.Box(from[0], from[1], from[2], to[0], to[1], to[2]).Grow(8)
+
+	var targets []spearTarget
+	for e := range p.tx.EntitiesWithin(search) {
+		if e.H() == p.H() {
+			continue
+		}
+		if fs, ok := e.(world.FakeSpectator); ok && fs.IsFakeSpectating() {
+			continue
+		}
+		bb := e.H().Type().BBox(e).Translate(e.Position())
+		hit, ok := p.spearHit(bb, from, to, margin)
+		if !ok {
+			continue
+		}
+		targets = append(targets, spearTarget{e: e, distance: hit.Sub(eye).Len()})
+	}
+	slices.SortFunc(targets, func(a, b spearTarget) int {
+		switch {
+		case a.distance < b.distance:
+			return -1
+		case a.distance > b.distance:
+			return 1
+		default:
+			return 0
+		}
+	})
+	return targets
+}
+
+// spearHit returns the position at which the line from from to to hits the hitbox passed, if it does. The
+// hitbox is also hit if it contains from, or if it is hit once inflated by margin and there is no block between
+// that hit and the hitbox itself.
+func (p *Player) spearHit(bb cube.BBox, from, to mgl64.Vec3, margin float64) (mgl64.Vec3, bool) {
+	if bb.Vec3Within(from) {
+		return from, true
+	}
+	if result, ok := trace.BBoxIntercept(bb, from, to); ok {
+		return result.Position(), true
+	}
+	if margin <= 0 {
+		return mgl64.Vec3{}, false
+	}
+	outside, ok := trace.BBoxIntercept(bb.Grow(margin), from, to)
+	if !ok {
+		return mgl64.Vec3{}, false
+	}
+	start, towards := outside.Position(), bb.Min().Add(bb.Max()).Mul(0.5)
+	if pos, blocked := p.spearBlockHit(start, towards); blocked {
+		towards = pos
+	}
+	if surface, ok := trace.BBoxIntercept(bb, start, towards); ok {
+		return surface.Position(), true
+	}
+	return mgl64.Vec3{}, false
+}
+
+// spearBlockHit returns the position of the first block hit by the line from start to end, if any.
+func (p *Player) spearBlockHit(start, end mgl64.Vec3) (mgl64.Vec3, bool) {
+	var (
+		hit     mgl64.Vec3
+		blocked bool
+	)
+	trace.TraverseBlocks(start, end, func(pos cube.Pos) bool {
+		result, ok := trace.BlockIntercept(pos, p.tx, p.tx.Block(pos), start, end)
+		if !ok {
+			return true
+		}
+		hit, blocked = result.Position(), true
+		return false
+	})
+	return hit, blocked
+}
+
+// tickSpearCharge performs the charge attack of a spear while the player holds the use button. Like in the Java
+// Edition, it hits the entities in the same line as a jab does, and what happens to them depends on the speed of
+// the player along their line of sight, the speed of the target along it, and the stage of the charge.
+func (p *Player) tickSpearCharge(spear item.Spear) {
+	damageStage, knockbackStage := spear.ChargeAttack(p.useDuration())
+	if !damageStage && !knockbackStage {
+		return
+	}
+
+	look := p.Rotation().Vec3()
+	attackerSpeed := look.Dot(p.Velocity()) * 20
+	now := time.Now()
+	for id, until := range p.spearChargeHits {
+		if now.After(until) {
+			delete(p.spearChargeHits, id)
+		}
+	}
+
+	for _, target := range p.spearTargets(spear) {
+		if held, _ := p.HeldItems(); held.Empty() {
+			// The spear broke while hitting one of the previous targets.
+			return
+		}
+		living, ok := target.e.(entity.Living)
+		if !ok || living.Dead() {
+			continue
+		}
+		id := target.e.H().UUID()
+		if until, ok := p.spearChargeHits[id]; ok && now.Before(until) {
+			continue
+		}
+		// The contact cooldown also starts if the speed isn't high enough to do anything to the target yet.
+		p.spearChargeHits[id] = now.Add(time.Second / 2)
+
+		relativeSpeed := math.Max(0, attackerSpeed-look.Dot(entityVelocity(target.e))*20)
+		damage := damageStage && attackerSpeed >= 0 && relativeSpeed >= spear.ChargeDamageSpeedRequirement()
+		knockback := knockbackStage && attackerSpeed >= spear.ChargeKnockbackSpeedRequirement()
+		if damage || knockback {
+			p.spearChargeEntity(living, spear, damage, knockback, relativeSpeed)
+		}
+	}
+}
+
+// spearChargeEntity applies a single charge attack hit to the entity passed.
+func (p *Player) spearChargeEntity(living entity.Living, spear item.Spear, damage, knockback bool, relativeSpeed float64) bool {
+	var (
+		force, height = 0.45, 0.3608
+		critical      = false
+	)
+	if knockback {
+		if k, ok := p.spearEnchantment(enchantment.Knockback); ok {
+			inc := enchantment.Knockback.Force(k.Level())
+			force += inc
+			height += inc
+		}
+	}
+	ctx := NewEventContext(p.tx, p)
+	if p.Handler().HandleAttackEntity(ctx, living, &force, &height, &critical); ctx.Cancelled() {
+		return false
+	}
+
+	accepted := false
+	if damage {
+		// Like in the Java Edition, the damage is the base damage of a player plus the relative speed times the
+		// multiplier of the spear rounded down, with the bonus of Sharpness added on top.
+		dmg := 1 + math.Floor(relativeSpeed*spear.ChargeMultiplier())
+		bonus := 0.0
+		if s, ok := p.spearEnchantment(enchantment.Sharpness); ok {
+			bonus = enchantment.Sharpness.Addend(s.Level())
+		}
+		n, result := living.Hurt(dmg+bonus, entity.AttackDamageSource{Attacker: p})
+		accepted = result.Accepted()
+		p.tx.PlaySound(entity.EyePosition(living), sound.Attack{Damage: !mgl64.FloatEqual(n, 0)})
+		if accepted && bonus > 0 {
+			for _, viewer := range p.tx.Viewers(living.Position()) {
+				viewer.ViewEntityAction(living, entity.EnchantedHitAction{})
+			}
+		}
+		// Fire Aspect bypasses shields in Bedrock Edition.
+		if result.Accepted() || result.Blocked() {
+			if f, ok := p.spearEnchantment(enchantment.FireAspect); ok {
+				if flammable, ok := living.(entity.Flammable); ok {
+					flammable.SetOnFire(enchantment.FireAspect.Duration(f.Level()))
+				}
+			}
+		}
+	} else {
+		p.tx.PlaySound(entity.EyePosition(living), sound.Attack{})
+	}
+	if !accepted && !knockback {
+		// Nothing happened to the target, so the spear isn't used either.
+		return false
+	}
+	if knockback {
+		living.KnockBack(p.Position(), force, height)
+	}
+	// Like in the Java Edition, every living entity that is affected costs the spear a durability point.
+	p.damageHeldItem()
+	p.Exhaust(0.1)
+	return true
+}
+
+// spearEnchantment returns the enchantment of the type passed on the item held in the main hand.
+func (p *Player) spearEnchantment(t item.EnchantmentType) (item.Enchantment, bool) {
+	held, _ := p.HeldItems()
+	return held.Enchantment(t)
+}
+
+// entityVelocity returns the velocity of an entity, or the zero vector if it has none.
+func entityVelocity(e world.Entity) mgl64.Vec3 {
+	if v, ok := e.(interface{ Velocity() mgl64.Vec3 }); ok {
+		return v.Velocity()
+	}
+	return mgl64.Vec3{}
 }
 
 // AttributeSwapEnabled, if non-nil, is called to check if attribute swapping is
@@ -2471,6 +2799,10 @@ func (p *Player) StartBreaking(pos cube.Pos, face cube.Face) {
 	}
 
 	held, _ := p.HeldItems()
+	if _, ok := held.Item().(item.Spear); ok {
+		// Spears can't break blocks.
+		return
+	}
 	if _, ok := held.Item().(item.Sword); ok && p.GameMode().CreativeInventory() {
 		// Can't break blocks with a sword in creative mode.
 		return
@@ -3252,6 +3584,9 @@ func (p *Player) Tick(tx *world.Tx, current int64) {
 	}
 
 	if p.usingItem {
+		if spear, ok := held.Item().(item.Spear); ok {
+			p.tickSpearCharge(spear)
+		}
 		if c, ok := held.Item().(item.Chargeable); ok {
 			c.ContinueCharge(p, tx, p.useContext(), p.useDuration())
 		}
