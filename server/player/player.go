@@ -86,6 +86,14 @@ type playerData struct {
 	// swapAxeAt is the last time that the player switched away from an axe, see
 	// ShieldSwapWindow.
 	swapAxeAt time.Time
+	// lungeAt, lungeSlot, lungeLevel and lungeCharged describe the last lunge of
+	// the player: when it happened, the hotbar slot of the spear, the level of
+	// the Lunge enchantment and whether the lunge actually cost exhaustion. They
+	// implement lunge swapping, see LungeSwapWindow.
+	lungeAt      time.Time
+	lungeSlot    int
+	lungeLevel   int
+	lungeCharged bool
 
 	fallNegate      bool
 	fallNegateAir   bool
@@ -1684,6 +1692,7 @@ func (p *Player) SetHeldSlot(to int) error {
 	if _, ok := p.swapFrom.Item().(item.Axe); ok {
 		p.swapAxeAt = p.swapAt
 	}
+	p.tryLungeSwap(from)
 	*p.heldSlot = uint32(to)
 	p.usingItem = false
 	shieldChanged := p.updateHeldItemState()
@@ -2357,8 +2366,13 @@ func (p *Player) spearLunge() {
 	dir := p.Rotation().Vec3()
 	boost := enchantment.Lunge.Boost(l.Level())
 	p.SetVelocity(p.Velocity().Add(mgl64.Vec3{dir[0] * boost, 0, dir[2] * boost}))
+	// Exhaust does nothing outside of survival mode or on peaceful difficulty, in
+	// which case there is no hunger for a lunge swap to give back either.
+	charged := p.GameMode().AllowsTakingDamage() && !p.tx.World().Difficulty().FoodRegenerates()
 	p.Exhaust(enchantment.Lunge.Exhaustion(l.Level()))
+	p.tx.PlaySound(p.Position(), sound.SpearLunge{Level: l.Level()})
 	p.damageHeldItem()
+	p.rememberLunge(l.Level(), charged)
 }
 
 // damageHeldItem damages the held item by its attack durability.
@@ -2613,6 +2627,9 @@ const (
 	AttributeSwapShieldDisable = "axe swap shield disable"
 	// AttributeSwapStunSlam is an axe to mace smash that disabled a shield.
 	AttributeSwapStunSlam = "stun slam"
+	// AttributeSwapLunge is a lunge swap: switching hotbar slots right after a
+	// lunge, see LungeSwapWindow.
+	AttributeSwapLunge = "lunge swap"
 )
 
 // notifyAttributeSwap tells the handler of the player that they performed an
@@ -2622,6 +2639,70 @@ func (p *Player) notifyAttributeSwap(kind string) {
 	if h, ok := p.Handler().(interface{ HandleAttributeSwap(*Player, string) }); ok {
 		h.HandleAttributeSwap(p, kind)
 	}
+}
+
+// LungeSwapWindow is the time after a lunge in which switching to a different
+// hotbar slot counts as a lunge swap, if attribute swapping is enabled. A lunge
+// swap resets the cooldown of the spear, so that it can jab (and lunge) again
+// right away, and gives back the hunger that the lunge cost.
+//
+// The addon this mechanic was ported from allows a swap up to 2 ticks after the
+// attack. Packets are handled on tick boundaries, so a swap 2 ticks later can
+// land up to about 3 ticks (150ms) after the lunge in wall-clock time, which is
+// the value used here.
+var LungeSwapWindow = 150 * time.Millisecond
+
+// rememberLunge stores that the player just lunged with the spear in the held
+// slot, so that switching slots right after it can be recognised as a lunge
+// swap. level is the level of the Lunge enchantment, and charged is whether the
+// lunge cost the player any exhaustion.
+func (p *Player) rememberLunge(level int, charged bool) {
+	p.lungeAt, p.lungeSlot, p.lungeLevel, p.lungeCharged = time.Now(), int(*p.heldSlot), level, charged
+}
+
+// tryLungeSwap checks if the hotbar slot change away from slot from is a lunge
+// swap and performs it if so: the cooldown of the spear is reset and the hunger
+// that the lunge cost (one point per level of Lunge, taken from saturation first
+// and then from food) is given back. A lunge can only be swapped once, by the
+// first slot change after it. It must be called after p.swapFrom was set to the
+// item in the slot that is being switched away from.
+func (p *Player) tryLungeSwap(from int) {
+	at, slot, level, charged := p.lungeAt, p.lungeSlot, p.lungeLevel, p.lungeCharged
+	p.lungeAt = time.Time{}
+	if at.IsZero() || slot != from || time.Since(at) > LungeSwapWindow {
+		return
+	}
+	spear := p.swapFrom
+	if _, ok := spear.Item().(item.Spear); !ok {
+		// The spear broke from the lunge, or was moved out of the slot.
+		return
+	}
+	if AttributeSwapEnabled == nil || !AttributeSwapEnabled(p) {
+		return
+	}
+
+	p.ResetCooldown(spear.Item())
+	if charged {
+		p.hunger.refund(enchantment.Lunge.Exhaustion(level) / 4)
+		p.sendFood()
+	}
+	p.notifyAttributeSwap(AttributeSwapLunge)
+}
+
+// ResetCooldown ends the cooldown of the item passed immediately, so that it can
+// be used again, and tells the client about it. Items that share a cooldown
+// category, such as all spears, all have their cooldown reset. If the item is
+// nil nothing happens. The cooldown of shields is not affected, as it is kept
+// in the shield state.
+func (p *Player) ResetCooldown(it world.Item) {
+	if it == nil {
+		return
+	}
+	if name, _ := it.EncodeItem(); name == shieldItemName {
+		return
+	}
+	delete(p.cooldowns, cooldownKey(it))
+	p.session().ViewItemCooldown(it, 0)
 }
 
 // ShieldSwapWindow is the time after a player switches away from an axe in which

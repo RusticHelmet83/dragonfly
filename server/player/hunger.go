@@ -1,6 +1,7 @@
 package player
 
 import (
+	"math"
 	"sync"
 )
 
@@ -89,6 +90,27 @@ func (m *hungerManager) saturate(food int, saturation float64) {
 
 	m.foodLevel = max(min(m.foodLevel+food, 20), 0)
 	m.saturationLevel = max(min(m.saturationLevel+saturation, float64(m.foodLevel)), 0)
+}
+
+// refund gives back points that were taken from the saturation and food of the
+// player, such as the cost of a lunge. Saturation is refilled first, up to the
+// food level, and whatever does not fit is added to the food level instead
+// (rounded up to a whole food point, capped at 20). This is the inverse of
+// desaturate, which also takes saturation before food.
+func (m *hungerManager) refund(points float64) {
+	if points <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	room := float64(m.foodLevel) - m.saturationLevel
+	if room >= points {
+		m.saturationLevel += points
+		return
+	}
+	m.saturationLevel = float64(m.foodLevel)
+	m.foodLevel = max(min(m.foodLevel+int(math.Ceil(points-room)), 20), 0)
 }
 
 // desaturate removes one saturation point from the player. If the saturation level of the player is already

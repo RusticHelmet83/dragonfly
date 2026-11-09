@@ -996,6 +996,18 @@ func (s *Session) playSound(pos mgl64.Vec3, t world.Sound, disableRelative bool)
 		default:
 			pk.SoundType = packet.SoundEventMaceSmashAir
 		}
+	case sound.SpearLunge:
+		// The lunge is a LevelSoundEvent tied to the entity performing it, so the
+		// player entity type is sent along with it.
+		pk.EntityType = "minecraft:player"
+		switch min(max(so.Level, 1), 3) {
+		case 1:
+			pk.SoundType = "item.enchant.lunge1"
+		case 2:
+			pk.SoundType = "item.enchant.lunge2"
+		default:
+			pk.SoundType = "item.enchant.lunge3"
+		}
 	case sound.Event:
 		pk.SoundType = so.Name
 	case sound.Raw:
