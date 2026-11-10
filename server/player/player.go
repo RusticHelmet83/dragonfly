@@ -2650,7 +2650,7 @@ func (p *Player) notifyAttributeSwap(kind string) {
 // attack. Packets are handled on tick boundaries, so a swap 2 ticks later can
 // land up to about 3 ticks (150ms) after the lunge in wall-clock time, which is
 // the value used here.
-var LungeSwapWindow = 150 * time.Millisecond
+var LungeSwapWindow = 250 * time.Millisecond
 
 // rememberLunge stores that the player just lunged with the spear in the held
 // slot, so that switching slots right after it can be recognised as a lunge
