@@ -2354,13 +2354,19 @@ func (p *Player) canLunge() bool {
 	return true
 }
 
+// LungeEnabled, if non-nil, is called before a spear lunge to check if the
+// player may lunge at all. If it returns false the Lunge enchantment does
+// nothing for that jab: no boost, no sound, no exhaustion and no durability
+// cost. It is nil by default, which allows everyone to lunge.
+var LungeEnabled func(p *Player) bool
+
 // spearLunge applies the Lunge enchantment of the spear held in the main hand after a jab. It adds an instant
 // horizontal boost in the direction the player is facing (the vertical part of the look direction is dropped,
 // so looking up or down gives a shorter lunge), costs exhaustion and one additional point of durability.
 func (p *Player) spearLunge() {
 	held, _ := p.HeldItems()
 	l, ok := held.Enchantment(enchantment.Lunge)
-	if !ok || !p.canLunge() {
+	if !ok || (LungeEnabled != nil && !LungeEnabled(p)) || !p.canLunge() {
 		return
 	}
 	dir := p.Rotation().Vec3()
@@ -2661,13 +2667,13 @@ func (p *Player) rememberLunge(level int, charged bool) {
 }
 
 // tryLungeSwap checks if the hotbar slot change away from slot from is a lunge
-// swap and performs it if so: the cooldown of the spear is reset and the hunger
-// that the lunge cost (one point per level of Lunge, taken from saturation first
-// and then from food) is given back. A lunge can only be swapped once, by the
+// swap and performs it if so: the cooldown of the spear is reset. The hunger
+// that the lunge cost is not given back, so every lunge costs hunger. A lunge
+// can only be swapped once, by the
 // first slot change after it. It must be called after p.swapFrom was set to the
 // item in the slot that is being switched away from.
 func (p *Player) tryLungeSwap(from int) {
-	at, slot, level, charged := p.lungeAt, p.lungeSlot, p.lungeLevel, p.lungeCharged
+	at, slot := p.lungeAt, p.lungeSlot
 	p.lungeAt = time.Time{}
 	if at.IsZero() || slot != from || time.Since(at) > LungeSwapWindow {
 		return
@@ -2681,11 +2687,9 @@ func (p *Player) tryLungeSwap(from int) {
 		return
 	}
 
+	// The hunger the lunge cost is deliberately not given back: a lunge swap
+	// only resets the cooldown, every lunge still costs hunger.
 	p.ResetCooldown(spear.Item())
-	if charged {
-		p.hunger.refund(enchantment.Lunge.Exhaustion(level) / 4)
-		p.sendFood()
-	}
 	p.notifyAttributeSwap(AttributeSwapLunge)
 }
 
