@@ -2293,6 +2293,10 @@ func (p *Player) attackEntity(e world.Entity, jab bool) bool {
 	} else if swapped && isMace {
 		if _, ok := i.Enchantment(enchantment.Breach); ok {
 			p.notifyAttributeSwap(AttributeSwapBreach)
+		} else if _, ok := i.Enchantment(enchantment.Density); ok && smash {
+			// Density only does anything during a smash, so a swap to a Density
+			// mace only counts as a density swap if the hit was a smash.
+			p.notifyAttributeSwap(AttributeSwapDensity)
 		}
 	}
 	if swapped && isMace && !smash {
@@ -2649,6 +2653,10 @@ var AttributeSwapWindow = 150 * time.Millisecond
 const (
 	// AttributeSwapBreach is a Breach swap: a weapon swapped to a Breach mace.
 	AttributeSwapBreach = "breach swap"
+	// AttributeSwapDensity is a Density swap: a weapon swapped to a Density mace
+	// right before a smash attack, so that the hit has the base damage of the
+	// weapon and the fall damage bonus of the Density enchantment.
+	AttributeSwapDensity = "density swap"
 	// AttributeSwapShieldDisable is an axe swap that disabled a shield.
 	AttributeSwapShieldDisable = "axe swap shield disable"
 	// AttributeSwapStunSlam is an axe to mace smash that disabled a shield.
