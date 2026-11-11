@@ -95,6 +95,12 @@ type playerData struct {
 	lungeLevel   int
 	lungeCharged bool
 
+	// reachSwapSpear and reachSwapAt hold the spear that the player switched away
+	// from last and when they did. They implement reach swapping, see
+	// ReachSwapWindow.
+	reachSwapSpear item.Stack
+	reachSwapAt    time.Time
+
 	fallNegate      bool
 	fallNegateAir   bool
 	fallNegateY     float64
@@ -1693,6 +1699,7 @@ func (p *Player) SetHeldSlot(to int) error {
 		p.swapAxeAt = p.swapAt
 	}
 	p.tryLungeSwap(from)
+	p.armReachSwap()
 	*p.heldSlot = uint32(to)
 	p.usingItem = false
 	shieldChanged := p.updateHeldItemState()
@@ -2120,7 +2127,20 @@ func (p *Player) AttackEntity(e world.Entity) bool {
 	if !p.canReach(e.Position()) {
 		return false
 	}
-	return p.attackEntity(e, false)
+	// A mace hit shortly after switching away from a spear can reach as far as
+	// that spear, see ReachSwapWindow.
+	reachSwap := p.reachSwapHit(e)
+	if reachSwap {
+		// Deal the hit with the mace alone: the base damage of the spear that was
+		// held a moment ago (see attributeSwapSource) must not weaken it.
+		p.swapFrom, p.swapAt = item.Stack{}, time.Time{}
+	}
+	p.consumeReachSwap()
+	hit := p.attackEntity(e, false)
+	if hit && reachSwap {
+		p.notifyAttributeSwap(AttributeSwapReach)
+	}
+	return hit
 }
 
 // attackEntity attacks the entity passed with the item held in the main hand. If jab is true the attack is
@@ -2636,6 +2656,9 @@ const (
 	// AttributeSwapLunge is a lunge swap: switching hotbar slots right after a
 	// lunge, see LungeSwapWindow.
 	AttributeSwapLunge = "lunge swap"
+	// AttributeSwapReach is a reach swap: a mace that hit with the reach of a
+	// spear that was held a moment ago, see ReachSwapWindow.
+	AttributeSwapReach = "reach swap"
 )
 
 // notifyAttributeSwap tells the handler of the player that they performed an
@@ -2691,6 +2714,123 @@ func (p *Player) tryLungeSwap(from int) {
 	// only resets the cooldown, every lunge still costs hunger.
 	p.ResetCooldown(spear.Item())
 	p.notifyAttributeSwap(AttributeSwapLunge)
+}
+
+// ReachSwapWindow is the time after switching away from a spear in which an
+// attack with a mace still has the reach of that spear, if attribute swapping is
+// enabled. The first attack after the switch uses up the reach swap, so every
+// switch away from a spear gives one extended hit.
+var ReachSwapWindow = 250 * time.Millisecond
+
+// ReachSwapNormalReach is the distance in blocks, measured from the eyes of the
+// player to the hitbox of the target, up to which a hit is just a normal hit.
+// Only hits further away than this count as a reach swap.
+var ReachSwapNormalReach = 3.0
+
+// ReachSwapWeapon reports whether the item held after the switch may use a reach
+// swap. Only maces can by default. To allow swords and axes too, return true for
+// every item.Weapon here.
+var ReachSwapWeapon = func(s item.Stack) bool {
+	_, ok := s.Item().(item.Mace)
+	return ok
+}
+
+// armReachSwap remembers the spear that the player is switching away from, so
+// that an attack right after the switch can use its reach. It must be called
+// after p.swapFrom and p.swapAt were set. Switching away from anything that is
+// not a spear clears the reach swap, so spear -> sword -> mace gives nothing.
+func (p *Player) armReachSwap() {
+	if _, ok := p.swapFrom.Item().(item.Spear); !ok {
+		p.consumeReachSwap()
+		return
+	}
+	p.reachSwapSpear, p.reachSwapAt = p.swapFrom, p.swapAt
+}
+
+// consumeReachSwap uses up the reach swap, if there is one.
+func (p *Player) consumeReachSwap() {
+	p.reachSwapSpear, p.reachSwapAt = item.Stack{}, time.Time{}
+}
+
+// reachSwapReady returns the spear whose reach the player can use right now:
+// they switched away from it less than ReachSwapWindow ago, hold an eligible
+// weapon and attribute swapping is enabled for them. It does not use up the
+// reach swap.
+func (p *Player) reachSwapReady() (item.Spear, bool) {
+	stack, at := p.reachSwapSpear, p.reachSwapAt
+	if stack.Empty() || at.IsZero() || time.Since(at) > ReachSwapWindow {
+		return item.Spear{}, false
+	}
+	spear, ok := stack.Item().(item.Spear)
+	if !ok {
+		return item.Spear{}, false
+	}
+	if held, _ := p.HeldItems(); held.Empty() || ReachSwapWeapon == nil || !ReachSwapWeapon(held) {
+		return item.Spear{}, false
+	}
+	if AttributeSwapEnabled == nil || !AttributeSwapEnabled(p) {
+		return item.Spear{}, false
+	}
+	return spear, true
+}
+
+// reachDistance returns the distance in blocks from the eyes of the player to
+// the closest point of the hitbox of e.
+func (p *Player) reachDistance(e world.Entity) float64 {
+	var (
+		bb       = e.H().Type().BBox(e).Translate(e.Position())
+		eye      = entity.EyePosition(p)
+		min, max = bb.Min(), bb.Max()
+	)
+	closest := mgl64.Vec3{
+		math.Max(min[0], math.Min(eye[0], max[0])),
+		math.Max(min[1], math.Min(eye[1], max[1])),
+		math.Max(min[2], math.Min(eye[2], max[2])),
+	}
+	return eye.Sub(closest).Len()
+}
+
+// reachSwapHit reports whether attacking e now is a reach swap: the player can
+// use the reach of a spear and e is further away than a normal hit reaches, but
+// still within the reach of that spear.
+func (p *Player) reachSwapHit(e world.Entity) bool {
+	spear, ok := p.reachSwapReady()
+	if !ok {
+		return false
+	}
+	_, maxRange := spear.AttackRange(p.GameMode().CreativeInventory())
+	d := p.reachDistance(e)
+	return d > ReachSwapNormalReach && d <= maxRange+spear.HitboxMargin()
+}
+
+// tryReachSwapAttack is used when the client swung at nothing. If the player can
+// use the reach of a spear, the closest living entity in the line of that spear
+// is hit with the weapon in the main hand instead, which is how a reach swap
+// looks to the server when the client did not see a target in reach of the mace.
+// It returns true if an attack was made.
+func (p *Player) tryReachSwapAttack() bool {
+	spear, ok := p.reachSwapReady()
+	if !ok || p.Dead() || !p.GameMode().AllowsInteraction() {
+		return false
+	}
+	for _, t := range p.spearTargets(spear) {
+		living, ok := t.e.(entity.Living)
+		if !ok || living.Dead() {
+			continue
+		}
+		p.consumeReachSwap()
+		// Deal the hit with the mace alone: the base damage of the spear that was
+		// held a moment ago (see attributeSwapSource) must not weaken it.
+		p.swapFrom, p.swapAt = item.Stack{}, time.Time{}
+		if !p.attackEntity(t.e, false) {
+			return false
+		}
+		if t.distance > ReachSwapNormalReach {
+			p.notifyAttributeSwap(AttributeSwapReach)
+		}
+		return true
+	}
+	return false
 }
 
 // ResetCooldown ends the cooldown of the item passed immediately, so that it can
@@ -4174,6 +4314,12 @@ func (p *Player) PunchAir() {
 	}
 	ctx := NewEventContext(p.tx, p)
 	if p.Handler().HandlePunchAir(ctx); ctx.Cancelled() {
+		return
+	}
+	// Right after switching away from a spear, a swing at nothing can still hit
+	// something in reach of that spear, see ReachSwapWindow. The attack swings the
+	// arm and delays the shield itself.
+	if p.tryReachSwapAttack() {
 		return
 	}
 	p.SwingArm()
