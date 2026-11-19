@@ -63,7 +63,7 @@ var conf = world.EntityRegistryConfig{
 		}
 		conf.Critical = arrow.Critical
 		conf.PiercingLevel = arrow.PiercingLevel
-		modifyProjectile(&opts, &conf, arrow.Owner)
+		modifyProjectile(&opts, &conf, arrow.Owner, "minecraft:arrow")
 		return opts.New(ArrowType, conf)
 	},
 }

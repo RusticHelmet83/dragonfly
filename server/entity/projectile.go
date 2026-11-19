@@ -22,11 +22,14 @@ import (
 var ProjectileTick func(e *Ent, tx *world.Tx, owner *world.EntityHandle)
 
 // ProjectileModifier, if set, is called when an arrow, snowball or egg is
-// created (NewTippedArrowWithDamage, NewSnowball and NewEgg). It receives the
-// owner of the projectile and returns multipliers that are applied to the
-// projectile's launch velocity, gravity and drag. If ok is false, the
-// projectile is left untouched. Multipliers that are not positive are ignored.
-var ProjectileModifier func(owner world.Entity) (speed, gravity, drag float64, ok bool)
+// created. It receives the owner of the projectile and the entity type name
+// ("minecraft:arrow", "minecraft:snowball", "minecraft:egg") and returns values
+// applied to the projectile's launch velocity, gravity and drag.
+// For arrows, speed is a multiplier applied to launch velocity (1.0 = default).
+// For snowballs and eggs, speed is the exact launch velocity (1.5 = default).
+// Gravity and drag are set absolutely.
+// If ok is false, the projectile is left untouched.
+var ProjectileModifier func(owner world.Entity, entityType string) (speed, gravity, drag float64, ok bool)
 
 // ProjectileKnockback, if set, is called when a projectile with a damage of 0
 // or more (arrows, snowballs, eggs...) hurts a living entity. It receives the
@@ -38,22 +41,28 @@ var ProjectileKnockback func(owner world.Entity, projectile *Ent) (force, height
 
 // modifyProjectile applies ProjectileModifier, if set, to the spawn options and
 // config of a projectile that is about to be created.
-func modifyProjectile(opts *world.EntitySpawnOpts, conf *ProjectileBehaviourConfig, owner world.Entity) {
+func modifyProjectile(opts *world.EntitySpawnOpts, conf *ProjectileBehaviourConfig, owner world.Entity, entityType string) {
 	if ProjectileModifier == nil || owner == nil {
 		return
 	}
-	speed, gravity, drag, ok := ProjectileModifier(owner)
+	speed, gravity, drag, ok := ProjectileModifier(owner, entityType)
 	if !ok {
 		return
 	}
 	if speed > 0 {
-		opts.Velocity = opts.Velocity.Mul(speed)
+		if entityType == "minecraft:arrow" {
+			opts.Velocity = opts.Velocity.Mul(speed)
+		} else {
+			if l := opts.Velocity.Len(); l > 0 {
+				opts.Velocity = opts.Velocity.Mul(speed / l)
+			}
+		}
 	}
 	if gravity > 0 {
-		conf.Gravity *= gravity
+		conf.Gravity = gravity
 	}
 	if drag > 0 {
-		conf.Drag *= drag
+		conf.Drag = drag
 	}
 }
 
