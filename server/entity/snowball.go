@@ -10,6 +10,7 @@ import (
 func NewSnowball(opts world.EntitySpawnOpts, owner world.Entity) *world.EntityHandle {
 	conf := snowballConf
 	conf.Owner = owner.H()
+	modifyProjectile(&opts, &conf, owner)
 	return opts.New(SnowballType, conf)
 }
 

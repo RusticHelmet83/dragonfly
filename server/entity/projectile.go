@@ -21,6 +21,42 @@ import (
 // It is called with the projectile Ent, current world.Tx, and the owner EntityHandle (which may be nil).
 var ProjectileTick func(e *Ent, tx *world.Tx, owner *world.EntityHandle)
 
+// ProjectileModifier, if set, is called when an arrow, snowball or egg is
+// created (NewTippedArrowWithDamage, NewSnowball and NewEgg). It receives the
+// owner of the projectile and returns multipliers that are applied to the
+// projectile's launch velocity, gravity and drag. If ok is false, the
+// projectile is left untouched. Multipliers that are not positive are ignored.
+var ProjectileModifier func(owner world.Entity) (speed, gravity, drag float64, ok bool)
+
+// ProjectileKnockback, if set, is called when a projectile with a damage of 0
+// or more (arrows, snowballs, eggs...) hurts a living entity. It receives the
+// owner of the projectile and the projectile itself, and returns the horizontal
+// and vertical knockback that replaces the default 0.45 and 0.3608. The
+// knockback addends of the projectile (such as Punch) are still added on top.
+// If ok is false, the default knockback is used.
+var ProjectileKnockback func(owner world.Entity, projectile *Ent) (force, height float64, ok bool)
+
+// modifyProjectile applies ProjectileModifier, if set, to the spawn options and
+// config of a projectile that is about to be created.
+func modifyProjectile(opts *world.EntitySpawnOpts, conf *ProjectileBehaviourConfig, owner world.Entity) {
+	if ProjectileModifier == nil || owner == nil {
+		return
+	}
+	speed, gravity, drag, ok := ProjectileModifier(owner)
+	if !ok {
+		return
+	}
+	if speed > 0 {
+		opts.Velocity = opts.Velocity.Mul(speed)
+	}
+	if gravity > 0 {
+		conf.Gravity *= gravity
+	}
+	if drag > 0 {
+		conf.Drag *= drag
+	}
+}
+
 // IsProjectile reports whether an entity has a ProjectileBehaviour.
 func IsProjectile(e world.Entity) bool {
 	ent, ok := e.(*Ent)
@@ -364,7 +400,13 @@ func (lt *ProjectileBehaviour) hitEntity(victim world.Entity, e *Ent, vel mgl64.
 		if !result.Accepted() {
 			return false
 		}
-		l.KnockBack(l.Position().Sub(vel), 0.45+lt.conf.KnockBackForceAddend, 0.3608+lt.conf.KnockBackHeightAddend)
+		force, height := 0.45, 0.3608
+		if ProjectileKnockback != nil && owner != nil {
+			if f, h, ok := ProjectileKnockback(owner, e); ok {
+				force, height = f, h
+			}
+		}
+		l.KnockBack(l.Position().Sub(vel), force+lt.conf.KnockBackForceAddend, height+lt.conf.KnockBackHeightAddend)
 
 		for _, eff := range lt.conf.Potion.Effects() {
 			if lasting, ok := eff.Type().(effect.LastingType); ok {
