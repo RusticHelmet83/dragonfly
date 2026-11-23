@@ -207,7 +207,12 @@ func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entit
 		if reset, ok := other.(interface{ ResetFallDistance() }); ok {
 			reset.ResetFallDistance()
 		}
-		mover.SetVelocity(mover.Velocity().Add(knockback))
+		if impulse, ok := other.(interface{ AddImpulse(mgl64.Vec3) }); ok {
+			// Players keep the motion they already have, like Java's pushFromExplosion.
+			impulse.AddImpulse(knockback)
+		} else {
+			mover.SetVelocity(mover.Velocity().Add(knockback))
+		}
 	}
 }
 

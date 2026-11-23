@@ -101,6 +101,19 @@ type playerData struct {
 	reachSwapSpear item.Stack
 	reachSwapAt    time.Time
 
+	// velAge is the number of ticks since the last movement packet was handled. It is used to
+	// expire data.Vel once a client stops sending movement, see Tick.
+	velAge int
+	// prevOnGround is whether the player was on the ground before the last movement packet. It
+	// selects the friction used in clientMotion.
+	prevOnGround bool
+	// motionOverride is the motion last sent to the client by AddImpulse, valid while
+	// hasMotionOverride is set. It lets several impulses in a short time stack instead of each
+	// replacing the previous one. motionOverrideAge counts the ticks since it was set.
+	motionOverride    mgl64.Vec3
+	hasMotionOverride bool
+	motionOverrideAge int
+
 	fallNegate      bool
 	fallNegateAir   bool
 	fallNegateY     float64
@@ -1447,7 +1460,9 @@ func (p *Player) Jump() {
 		if e, ok := p.Effect(effect.JumpBoost); ok {
 			jumpVel = float64(e.Level()) / 10
 		}
-		p.data.Vel = mgl64.Vec3{0, jumpVel}
+		// Only the vertical part is set: the horizontal movement of the last movement packet is
+		// still accurate and is needed for spear charges and impulses.
+		p.data.Vel[1] = jumpVel
 	}
 	if p.Sprinting() {
 		p.Exhaust(0.2)
@@ -2395,7 +2410,7 @@ func (p *Player) spearLunge() {
 	}
 	dir := p.Rotation().Vec3()
 	boost := enchantment.Lunge.Boost(l.Level())
-	p.SetVelocity(p.Velocity().Add(mgl64.Vec3{dir[0] * boost, 0, dir[2] * boost}))
+	p.AddImpulse(mgl64.Vec3{dir[0] * boost, 0, dir[2] * boost})
 	// Exhaust does nothing outside of survival mode or on peaceful difficulty, in
 	// which case there is no hunger for a lunge swap to give back either.
 	charged := p.GameMode().AllowsTakingDamage() && !p.tx.World().Difficulty().FoodRegenerates()
@@ -3407,6 +3422,8 @@ func (p *Player) SmoothTeleport(pos mgl64.Vec3) {
 // Move also rotates the player, adding deltaYaw and deltaPitch to the respective values.
 func (p *Player) Move(deltaPos mgl64.Vec3, deltaYaw, deltaPitch float64) {
 	if p.Dead() || (deltaPos.ApproxEqual(mgl64.Vec3{}) && mgl64.FloatEqual(deltaYaw, 0) && mgl64.FloatEqual(deltaPitch, 0)) {
+		p.prevOnGround = p.onGround
+		p.velAge = 0
 		p.onGround = true
 		p.updateFallState(deltaPos.Y())
 		// No movement this tick, so the velocity is zero. Without this a stale
@@ -3444,6 +3461,7 @@ func (p *Player) Move(deltaPos mgl64.Vec3, deltaYaw, deltaPitch float64) {
 
 	p.data.Pos = res
 	p.data.Rot = resRot
+	p.velAge = 0
 	if deltaPos.Len() <= 3 {
 		// Only update velocity if the player is not moving too fast to prevent potential OOMs.
 		p.data.Vel = deltaPos
@@ -3472,6 +3490,7 @@ func (p *Player) Move(deltaPos mgl64.Vec3, deltaYaw, deltaPitch float64) {
 		p.session().ViewEntityState(p)
 	}
 
+	p.prevOnGround = p.onGround
 	p.onGround = p.checkOnGround(deltaPos)
 	p.updateFallState(deltaPos.Y())
 
@@ -3522,6 +3541,72 @@ func (p *Player) SetVelocity(velocity mgl64.Vec3) {
 	}
 	for _, v := range p.viewers() {
 		v.ViewEntityVelocity(p, velocity)
+	}
+}
+
+// ClientMotion returns the motion the client of the player is estimated to have at the start of its next tick: the
+// value that Java Edition's deltaMovement holds when an explosion or an enchantment adds an impulse to it. The
+// client reports positions, not velocities, so it is derived from the movement of the last movement packet by
+// applying the movement physics of the tick that followed it: gravity and drag on the Y axis, and air or block
+// friction on the X and Z axes. Without a session, the velocity of the player is returned as it is.
+func (p *Player) ClientMotion() mgl64.Vec3 {
+	if p.session() == session.Nop {
+		return p.data.Vel
+	}
+	if p.hasMotionOverride {
+		return p.motionOverride
+	}
+	d := p.data.Vel
+	if p.Gliding() || p.Flying() || p.inLiquid() {
+		// These don't follow the ground movement physics, so the movement is the best estimate.
+		return d
+	}
+	if p.onGround && d[1] <= 0 {
+		// Landing or standing on a block cancels the vertical movement before gravity is applied, which makes
+		// the motion of a player that stands on the ground -0.0784, not 0.
+		d[1] = 0
+	}
+	return p.stepMotion(d)
+}
+
+// stepMotion applies the movement physics of a single tick to the movement d of the previous tick and returns the
+// resulting motion for the next one. Player movement is the same in Java and Bedrock Edition: v = (v - 0.08) * 0.98
+// on the Y axis, and 0.91 (times the friction of the block below if the player was on the ground) on X and Z.
+func (p *Player) stepMotion(d mgl64.Vec3) mgl64.Vec3 {
+	friction := 0.91
+	if p.prevOnGround {
+		blockFriction := 0.6
+		if f, ok := p.tx.Block(cube.PosFromVec3(p.Position()).Side(cube.FaceDown)).(interface{ Friction() float64 }); ok {
+			blockFriction = f.Friction()
+		}
+		friction *= blockFriction
+	}
+	return mgl64.Vec3{d[0] * friction, (d[1] - 0.08) * 0.98, d[2] * friction}
+}
+
+// inLiquid checks if the feet or the eyes of the player are inside a liquid.
+func (p *Player) inLiquid() bool {
+	for _, y := range [...]float64{0, p.EyeHeight()} {
+		if _, ok := p.tx.Liquid(cube.PosFromVec3(p.Position().Add(mgl64.Vec3{0, y}))); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// AddImpulse adds an impulse to the motion of the player, like Java Edition does with
+// Entity#addDeltaMovement and pushFromExplosion. The motion of the client is replaced by its estimated current
+// motion (see ClientMotion) plus the impulse, so the momentum the player already has, such as the upwards
+// speed of a jump, is kept. SetVelocity would replace the motion of the player with the velocity passed.
+func (p *Player) AddImpulse(impulse mgl64.Vec3) {
+	if p.session() == session.Nop {
+		p.data.Vel = p.data.Vel.Add(impulse)
+		return
+	}
+	v := p.ClientMotion().Add(impulse)
+	p.motionOverride, p.hasMotionOverride, p.motionOverrideAge = v, true, 0
+	for _, viewer := range p.viewers() {
+		viewer.ViewEntityVelocity(p, v)
 	}
 }
 
@@ -3858,7 +3943,19 @@ func (p *Player) Tick(tx *world.Tx, current int64) {
 			p.Move(m.Position().Sub(p.Position()), 0, 0)
 		}
 	} else {
-		p.data.Vel = mgl64.Vec3{}
+		// The velocity of a player with a session is the movement of its last movement packet. It
+		// must not be reset every tick: the order entities are ticked in is random, so other
+		// entities (a wind charge bursting, for example) would randomly see 0 instead. It only
+		// expires if the client stopped sending movement.
+		if p.velAge++; p.velAge > 2 {
+			p.data.Vel = mgl64.Vec3{}
+		}
+		if p.hasMotionOverride {
+			p.motionOverride = p.stepMotion(p.motionOverride)
+			if p.motionOverrideAge++; p.motionOverrideAge > 3 {
+				p.hasMotionOverride = false
+			}
+		}
 	}
 
 	p.portalTravel.StopPortalContact()
