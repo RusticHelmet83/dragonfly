@@ -13,6 +13,7 @@ import (
 func NewBottleOfEnchanting(opts world.EntitySpawnOpts, owner world.Entity) *world.EntityHandle {
 	conf := bottleOfEnchantingConf
 	conf.Owner = owner.H()
+	modifyProjectile(&opts, &conf, owner, ProjectileBottleOfEnchanting)
 	return opts.New(BottleOfEnchantingType, conf)
 }
 

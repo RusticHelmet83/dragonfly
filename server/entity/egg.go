@@ -11,7 +11,7 @@ import (
 func NewEgg(opts world.EntitySpawnOpts, owner world.Entity) *world.EntityHandle {
 	conf := eggConf
 	conf.Owner = owner.H()
-	modifyProjectile(&opts, &conf, owner, "minecraft:egg")
+	modifyProjectile(&opts, &conf, owner, ProjectileEgg)
 	return opts.New(EggType, conf)
 }
 

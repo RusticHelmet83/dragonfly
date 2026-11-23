@@ -14,6 +14,7 @@ import (
 func NewEnderPearl(opts world.EntitySpawnOpts, owner world.Entity) *world.EntityHandle {
 	conf := enderPearlConf
 	conf.Owner = owner.H()
+	modifyProjectile(&opts, &conf, owner, ProjectileEnderPearl)
 	return opts.New(EnderPearlType, conf)
 }
 

@@ -3585,6 +3585,17 @@ func (p *Player) SetVelocity(velocity mgl64.Vec3) {
 	}
 }
 
+// ThrowMotion returns the movement of the player that is added to the launch velocity of the projectiles it
+// throws or shoots, see entity.PrepareProjectile. It is the movement of the last movement packet, like Java
+// Edition's getKnownMovement. Players without a session, such as bots, return no movement: they calculate the
+// velocity of their throws themselves and do not expect it to change.
+func (p *Player) ThrowMotion() mgl64.Vec3 {
+	if p.session() == session.Nop {
+		return mgl64.Vec3{}
+	}
+	return p.data.Vel
+}
+
 // ClientMotion returns the motion the client of the player is estimated to have at the start of its next tick: the
 // value that Java Edition's deltaMovement holds when an explosion or an enchantment adds an impulse to it. The
 // client reports positions, not velocities, so it is derived from the movement of the last movement packet by

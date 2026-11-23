@@ -21,8 +21,8 @@ import (
 // It is called with the projectile Ent, current world.Tx, and the owner EntityHandle (which may be nil).
 var ProjectileTick func(e *Ent, tx *world.Tx, owner *world.EntityHandle)
 
-// ProjectileModifier, if set, is called when an arrow, snowball or egg is
-// created. It receives the owner of the projectile and the entity type name
+// ProjectileModifier, if set, is called when a projectile is created (see PrepareProjectile).
+// It is called It receives the owner of the projectile and the entity type name
 // ("minecraft:arrow", "minecraft:snowball", "minecraft:egg") and returns values
 // applied to the projectile's launch velocity, gravity and drag.
 // For arrows, speed is a multiplier applied to launch velocity (1.0 = default).
@@ -39,31 +39,10 @@ var ProjectileModifier func(owner world.Entity, entityType string) (speed, gravi
 // If ok is false, the default knockback is used.
 var ProjectileKnockback func(owner world.Entity, projectile *Ent) (force, height float64, ok bool)
 
-// modifyProjectile applies ProjectileModifier, if set, to the spawn options and
-// config of a projectile that is about to be created.
+// modifyProjectile applies the tuning, ProjectileModifier and the motion of the owner to the spawn options and
+// config of a projectile that is about to be created, see PrepareProjectile.
 func modifyProjectile(opts *world.EntitySpawnOpts, conf *ProjectileBehaviourConfig, owner world.Entity, entityType string) {
-	if ProjectileModifier == nil || owner == nil {
-		return
-	}
-	speed, gravity, drag, ok := ProjectileModifier(owner, entityType)
-	if !ok {
-		return
-	}
-	if speed > 0 {
-		if entityType == "minecraft:arrow" {
-			opts.Velocity = opts.Velocity.Mul(speed)
-		} else {
-			if l := opts.Velocity.Len(); l > 0 {
-				opts.Velocity = opts.Velocity.Mul(speed / l)
-			}
-		}
-	}
-	if gravity > 0 {
-		conf.Gravity = gravity
-	}
-	if drag > 0 {
-		conf.Drag = drag
-	}
+	PrepareProjectile(opts, conf, owner, entityType)
 }
 
 // IsProjectile reports whether an entity has a ProjectileBehaviour.

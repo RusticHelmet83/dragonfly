@@ -25,6 +25,7 @@ const (
 func NewWindCharge(opts world.EntitySpawnOpts, owner world.Entity) *world.EntityHandle {
 	conf := windChargeConf
 	conf.Owner = owner.H()
+	modifyProjectile(&opts, &conf, owner, ProjectileWindCharge)
 	return opts.New(WindChargeType, conf)
 }
 

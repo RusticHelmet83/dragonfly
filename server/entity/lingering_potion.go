@@ -20,6 +20,7 @@ func NewLingeringPotion(opts world.EntitySpawnOpts, t potion.Potion, owner world
 	conf.Particle = particle.Splash{Colour: colour}
 	conf.Hit = potionSplash(0.25, t, true)
 	conf.Owner = owner.H()
+	modifyProjectile(&opts, &conf, owner, ProjectileLingeringPotion)
 	return opts.New(LingeringPotionType, conf)
 }
 
