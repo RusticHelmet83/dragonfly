@@ -67,6 +67,23 @@ func TestPrepareProjectile(t *testing.T) {
 		t.Fatalf("hook: got %v, want %v", opts.Velocity, want)
 	}
 
+	// The per-owner tuner overrides the global tuning field by field.
+	SetProjectileTuning(typ, ProjectileTuning{Speed: Float(1), Gravity: Float(0.2)})
+	ProjectileInheritMotion = nil
+	ProjectileTuner = func(world.Entity, string) *ProjectileTuning {
+		return &ProjectileTuning{Speed: Float(3), InheritMotion: Bool(false)}
+	}
+	t.Cleanup(func() { ProjectileTuner = nil })
+	opts, conf = launch()
+	PrepareProjectile(&opts, &conf, owner, typ)
+	if want := (mgl64.Vec3{3, 0, 0}); !opts.Velocity.ApproxEqual(want) {
+		t.Fatalf("tuner: got %v, want %v", opts.Velocity, want)
+	}
+	if conf.Gravity != 0.2 {
+		t.Fatalf("tuner kept global gravity: got %v", conf.Gravity)
+	}
+	ProjectileTuner = nil
+
 	// The fishing hook does not inherit by default.
 	ProjectileInheritMotion = nil
 	opts, conf = launch()

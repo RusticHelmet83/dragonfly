@@ -64,6 +64,28 @@ func ProjectileTuningOf(entityType string) ProjectileTuning {
 	return projectileTuning.m[entityType]
 }
 
+// ProjectileTuner, if set, is called when a projectile is created with the owner and the type of the projectile. The
+// tuning it returns overrides the global tuning of the type (see SetProjectileTuning) for this projectile, field by
+// field: a nil field keeps the global value. It is meant for per-player settings. Returning nil changes nothing.
+var ProjectileTuner func(owner world.Entity, entityType string) *ProjectileTuning
+
+// overriddenBy returns t with every field that is set in o replaced by the one of o.
+func (t ProjectileTuning) overriddenBy(o ProjectileTuning) ProjectileTuning {
+	if o.Speed != nil {
+		t.Speed = o.Speed
+	}
+	if o.Gravity != nil {
+		t.Gravity = o.Gravity
+	}
+	if o.Drag != nil {
+		t.Drag = o.Drag
+	}
+	if o.InheritMotion != nil {
+		t.InheritMotion = o.InheritMotion
+	}
+	return t
+}
+
 // ProjectileInheritMotion, if set, is called when a projectile is created, and overrides whether the motion of the
 // owner is added to the launch velocity of the projectile (see ProjectileTuning.InheritMotion) for this owner. If ok
 // is false the tuning of the type decides. It can be used to turn inheriting off for a game mode, for example.
@@ -78,11 +100,17 @@ type throwMotionSource interface {
 }
 
 // PrepareProjectile applies the tuning of the type of projectile, ProjectileModifier and the motion of the
-// owner to the spawn options and config of a projectile that is about to be created, in that order. The speed
+// owner to the spawn options and config of a projectile that is about to be created, in that order (the tuning of
+// the type, overridden field by field by ProjectileTuner, then ProjectileModifier). The speed
 // of the tuning is applied before the motion of the owner is added, so it only changes the throw speed.
 // Projectile constructors, including ones outside of this package, should call it with the entity type name.
 func PrepareProjectile(opts *world.EntitySpawnOpts, conf *ProjectileBehaviourConfig, owner world.Entity, entityType string) {
 	t := ProjectileTuningOf(entityType)
+	if owner != nil && ProjectileTuner != nil {
+		if o := ProjectileTuner(owner, entityType); o != nil {
+			t = t.overriddenBy(*o)
+		}
+	}
 	if t.Speed != nil {
 		scaleLaunch(opts, *t.Speed, entityType)
 	}
