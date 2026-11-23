@@ -150,7 +150,24 @@ func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entit
 		living.Hurt(1, ProjectileDamageSource{Projectile: e, Owner: owner})
 	}
 
-	doubleRadius := windChargeBurstRadius * 2
+	windExplosion(tx, impact, windChargeBurstRadius, windChargeBurstForce, true)
+}
+
+// WindBurstExplosion performs the explosion of the Wind Burst enchantment of a mace at the centre passed, with
+// the radius and knockback multiplier of the enchantment level. Like in Java Edition (ExplodeEffect), it deals no
+// damage and affects every entity, including the attacker, the same way a wind charge burst does.
+func WindBurstExplosion(tx *world.Tx, center mgl64.Vec3, radius, force float64) {
+	tx.PlaySound(center, sound.WindCharge{})
+	tx.AddParticle(center, particle.WindCharge{})
+	windExplosion(tx, center, radius, force, false)
+}
+
+// windExplosion pushes all entities around the centre passed away from it. This mirrors Java's
+// ServerExplosion.hurtEntities: every entity within twice the radius of the centre (measured from its feet) is
+// pushed towards its eye position with a power of (1 - dist) * exposure * force. If windCharge is true, the
+// explosion was caused by a wind charge, which negates fall damage above the burst for players.
+func windExplosion(tx *world.Tx, impact mgl64.Vec3, radius, force float64, windCharge bool) {
+	doubleRadius := radius * 2
 	search := cube.Box(-doubleRadius-1, -doubleRadius-1, -doubleRadius-1, doubleRadius+1, doubleRadius+1, doubleRadius+1).Translate(impact)
 	for other := range tx.EntitiesWithin(search) {
 		if other.H().Type() == WindChargeType {
@@ -196,16 +213,19 @@ func windChargeBurst(e *Ent, tx *world.Tx, impact mgl64.Vec3, direct world.Entit
 		direction := delta.Normalize()
 
 		box := other.H().Type().BBox(other).Translate(other.Position())
-		power := (1 - dist) * windChargeSeenPercent(tx, impact, box) * windChargeBurstForce
+		power := (1 - dist) * windChargeSeenPercent(tx, impact, box) * force
 		knockback := direction.Mul(power)
 
-		// Fall damage is negated above the height of the burst, but the fall
-		// distance keeps counting so a mace smash is still possible.
-		if neg, ok := other.(interface{ NegateFallDamageAbove(y float64) }); ok {
-			neg.NegateFallDamageAbove(min(impact[1], other.Position()[1]) - 0.01)
-		}
-		if reset, ok := other.(interface{ ResetFallDistance() }); ok {
-			reset.ResetFallDistance()
+		if windCharge {
+			// Fall damage is negated above the height of the burst, but the fall
+			// distance keeps counting so a mace smash is still possible. Java only
+			// does this for explosions caused by a wind charge.
+			if neg, ok := other.(interface{ NegateFallDamageAbove(y float64) }); ok {
+				neg.NegateFallDamageAbove(min(impact[1], other.Position()[1]) - 0.01)
+			}
+			if reset, ok := other.(interface{ ResetFallDistance() }); ok {
+				reset.ResetFallDistance()
+			}
 		}
 		if impulse, ok := other.(interface{ AddImpulse(mgl64.Vec3) }); ok {
 			// Players keep the motion they already have, like Java's pushFromExplosion.

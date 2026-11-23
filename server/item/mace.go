@@ -17,7 +17,7 @@ const (
 	MaceHeavySmashFall = 5.0
 	// MaceSmashRadius is the radius around the entity hit by a smash attack in
 	// which other entities are knocked back.
-	MaceSmashRadius = 2.5
+	MaceSmashRadius = 3.5
 )
 
 // MaxCount ...

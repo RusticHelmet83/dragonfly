@@ -2183,10 +2183,6 @@ func (p *Player) attackEntity(e world.Entity, jab bool) bool {
 	i, _ := p.HeldItems()
 	_, isMace := i.Item().(item.Mace)
 	smash := isMace && isLiving && p.maceSmashing()
-	if smash {
-		// A smash attack always counts as a critical hit, even while sprinting.
-		critical = !p.Flying() && !blind
-	}
 	if k, ok := i.Enchantment(enchantment.Knockback); ok {
 		inc := enchantment.Knockback.Force(k.Level())
 		force += inc
@@ -2962,13 +2958,13 @@ func holdsTotem(e world.Entity) bool {
 // attack with a mace to be a smash attack.
 func (p *Player) maceSmashing() bool {
 	_, slowFalling := p.Effect(effect.SlowFalling)
-	return p.fallDistance > item.MaceSmashMinFall && !p.OnGround() && !p.Flying() && !slowFalling
+	return p.fallDistance > item.MaceSmashMinFall && !p.OnGround() && !p.Flying() && !p.Gliding() && !slowFalling
 }
 
-// MaceWindBurstLaunchScale multiplies the launch velocity of the Wind Burst
-// enchantment. It is 1 by default, which makes the launch reach the height
-// returned by enchantment.WindBurst.LaunchHeight exactly. It may be raised or
-// lowered to tune how the launch feels.
+// MaceWindBurstLaunchScale is no longer used: Wind Burst is an explosion with the knockback multiplier of
+// Java Edition now, see enchantment.WindBurst.KnockbackMultiplier.
+//
+// Deprecated: it has no effect.
 var MaceWindBurstLaunchScale = 1.0
 
 // OnMaceSmash, if non-nil, is called after a player lands a mace smash attack
@@ -2995,13 +2991,27 @@ func (p *Player) smashEffects(target world.Entity, force, height, fallDistance f
 		p.tx.AddParticle(pos, particle.SmashAttack{Block: below})
 	}
 
+	// Like in Java Edition (MaceItem.hurtEnemy), a smash cancels the vertical motion of the attacker (leaving
+	// 0.01 so it does not stick to the ground), keeps the horizontal motion, and makes the fall below the point of
+	// the smash the only part of the next fall that can deal fall damage.
+	p.SetClientMotionY(0.01)
+	if !p.fallNegate || p.fallNegateY > p.Position()[1] {
+		p.NegateFallDamageAbove(p.Position()[1] - 0.01)
+	}
+
+	// Entities around the target are pushed away from it with a power that falls off with the distance, twice as
+	// much after a heavy smash (a fall of more than 5 blocks).
 	r := item.MaceSmashRadius
+	multiplier := 1.0
+	if fallDistance > item.MaceHeavySmashFall {
+		multiplier = 2
+	}
 	for other := range p.tx.EntitiesWithin(cube.Box(-r, -r, -r, r, r, r).Translate(pos)) {
 		if other.H() == target.H() || other.H() == p.H() {
 			continue
 		}
 		l, ok := other.(entity.Living)
-		if !ok || l.Dead() || other.Position().Sub(pos).Len() > r {
+		if !ok || l.Dead() {
 			continue
 		}
 		if fs, ok := other.(world.FakeSpectator); ok && fs.IsFakeSpectating() {
@@ -3010,14 +3020,45 @@ func (p *Player) smashEffects(target world.Entity, force, height, fallDistance f
 		if g, ok := other.(interface{ GameMode() world.GameMode }); ok && !g.GameMode().HasCollision() {
 			continue
 		}
-		l.KnockBack(pos, force, height)
+		// Creative players that are flying take no knockback.
+		if f, ok := other.(interface{ Flying() bool }); ok && f.Flying() {
+			if g, ok := other.(interface{ GameMode() world.GameMode }); ok && g.GameMode().CreativeInventory() {
+				continue
+			}
+		}
+		direction := other.Position().Sub(pos)
+		dist := direction.Len()
+		if dist > r {
+			continue
+		}
+		resistance := 0.0
+		if pl, ok := other.(*Player); ok {
+			resistance = pl.Armour().KnockBackResistance()
+		}
+		power := (r - dist) * 0.7 * multiplier * (1 - resistance)
+		if power <= 0 {
+			continue
+		}
+		var horizontal mgl64.Vec3
+		if dist > 0 {
+			horizontal = direction.Mul(power / dist)
+		}
+		// Java adds the horizontal push, but a fixed 0.7 upwards, to the motion of the entity.
+		impulse := mgl64.Vec3{horizontal[0], 0.7, horizontal[2]}
+		if imp, ok := other.(interface{ AddImpulse(mgl64.Vec3) }); ok {
+			imp.AddImpulse(impulse)
+		} else if mover, ok := other.(interface {
+			SetVelocity(mgl64.Vec3)
+			Velocity() mgl64.Vec3
+		}); ok {
+			mover.SetVelocity(mover.Velocity().Add(impulse))
+		}
 	}
 
-	if wb, ok := held.Enchantment(enchantment.WindBurst); ok {
-		p.tx.PlaySound(pos, sound.WindCharge{})
-		p.tx.AddParticle(pos, particle.WindCharge{})
-		v := entity.LaunchVelocityForHeight(enchantment.WindBurst.LaunchHeight(wb.Level())) * MaceWindBurstLaunchScale
-		p.SetVelocity(mgl64.Vec3{0, v, 0})
+	// Wind Burst is an explosion at the feet of the attacker that deals no damage, and pushes everyone around,
+	// the attacker included, away from it with the knockback multiplier of the level.
+	if wb, ok := held.Enchantment(enchantment.WindBurst); ok && !p.Flying() && fallDistance >= item.MaceSmashMinFall {
+		entity.WindBurstExplosion(p.tx, p.Position(), enchantment.WindBurst.Radius(wb.Level()), enchantment.WindBurst.KnockbackMultiplier(wb.Level()))
 	}
 	// Smashing resets the fall distance, so the next smash needs a new fall.
 	p.ResetFallDistance()
@@ -3603,7 +3644,23 @@ func (p *Player) AddImpulse(impulse mgl64.Vec3) {
 		p.data.Vel = p.data.Vel.Add(impulse)
 		return
 	}
-	v := p.ClientMotion().Add(impulse)
+	p.sendMotion(p.ClientMotion().Add(impulse))
+}
+
+// SetClientMotionY sets the vertical motion of the player to y, keeping the horizontal motion the client has, like
+// Java Edition does with setDeltaMovement(getDeltaMovement().with(Axis.Y, y)).
+func (p *Player) SetClientMotionY(y float64) {
+	if p.session() == session.Nop {
+		p.data.Vel[1] = y
+		return
+	}
+	v := p.ClientMotion()
+	v[1] = y
+	p.sendMotion(v)
+}
+
+// sendMotion sends the motion passed to the client of the player and remembers it, see AddImpulse.
+func (p *Player) sendMotion(v mgl64.Vec3) {
 	p.motionOverride, p.hasMotionOverride, p.motionOverrideAge = v, true, 0
 	for _, viewer := range p.viewers() {
 		viewer.ViewEntityVelocity(p, v)

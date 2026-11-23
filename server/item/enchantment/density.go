@@ -29,7 +29,7 @@ func (density) Cost(level int) (int, int) {
 
 // Rarity ...
 func (density) Rarity() item.EnchantmentRarity {
-	return item.EnchantmentRarityRare
+	return item.EnchantmentRarityUncommon
 }
 
 // PerBlockAddend returns the additional damage dealt by a smash attack for
