@@ -53,7 +53,8 @@ func (WindCharge) Use(tx *world.Tx, user User, ctx *UseContext) bool {
 	// Triangle-distributed spread of 0.0172275 * uncertainty per axis.
 	spread := func() float64 { return 0.0172275 * WindChargeSpread * (rand.Float64() - rand.Float64()) }
 	dir := rot.Vec3().Normalize().Add(mgl64.Vec3{spread(), spread(), spread()}).Normalize()
-	vel := dir.Mul(WindChargeThrowSpeed)
+	// The speed set in the projectile tuning wins; WindChargeThrowSpeed is used if none is set.
+	vel := dir.Mul(throwSpeed(user, "minecraft:wind_charge_projectile", WindChargeThrowSpeed))
 	// The movement of the thrower is added by the wind charge constructor, see entity.PrepareProjectile.
 	opts := world.EntitySpawnOpts{Position: pos, Velocity: vel, Rotation: rot}
 	tx.AddEntity(create(opts, user))

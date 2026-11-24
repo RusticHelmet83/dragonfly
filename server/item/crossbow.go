@@ -178,7 +178,8 @@ func (c Crossbow) shoot(releaser Releaser, tx *world.Tx, offsetAngle float64, ar
 		arrowConf.Tip = c.Item.Item().(Arrow).Tip
 		arrow := createArrow(world.EntitySpawnOpts{
 			Position: torsoPosition(releaser),
-			Velocity: dirVec.Mul(5.15),
+			// The speed of the arrow tuning is a multiplier of the launch velocity of the crossbow (1 by default).
+			Velocity: dirVec.Mul(5.15 * throwSpeed(releaser, "minecraft:arrow", 1)),
 			Rotation: rot.Neg(),
 		}, arrowConf)
 		tx.AddEntity(arrow)

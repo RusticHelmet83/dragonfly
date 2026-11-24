@@ -25,6 +25,8 @@ const (
 type ProjectileTuning struct {
 	// Speed is the launch speed in blocks per tick. It does not include the motion of the thrower, see
 	// InheritMotion. For arrows it is a multiplier of the launch velocity instead (1 is the default).
+	// Whatever throws the projectile (an item, a handler) reads it with ThrowSpeedOf and launches the projectile at
+	// that speed right away. PrepareProjectile does not apply it.
 	Speed *float64
 	// Gravity is the downwards acceleration of the projectile in blocks per tick squared. 0 disables gravity.
 	Gravity *float64
@@ -99,10 +101,11 @@ type throwMotionSource interface {
 	OnGround() bool
 }
 
-// PrepareProjectile applies the tuning of the type of projectile, ProjectileModifier and the motion of the
-// owner to the spawn options and config of a projectile that is about to be created, in that order (the tuning of
-// the type, overridden field by field by ProjectileTuner, then ProjectileModifier). The speed
-// of the tuning is applied before the motion of the owner is added, so it only changes the throw speed.
+// PrepareProjectile applies the gravity and drag of the tuning of the type of projectile, ProjectileModifier and
+// the motion of the owner to the spawn options and config of a projectile that is about to be created, in that
+// order (the tuning of the type, overridden field by field by ProjectileTuner, then ProjectileModifier). The
+// speed of the tuning is not applied here: the code that throws the projectile launches it at that speed itself, see
+// ThrowSpeedOf, so the motion of the owner is added to a launch velocity that already has the right speed.
 // Projectile constructors, including ones outside of this package, should call it with the entity type name.
 func PrepareProjectile(opts *world.EntitySpawnOpts, conf *ProjectileBehaviourConfig, owner world.Entity, entityType string) {
 	t := ProjectileTuningOf(entityType)
@@ -110,9 +113,6 @@ func PrepareProjectile(opts *world.EntitySpawnOpts, conf *ProjectileBehaviourCon
 		if o := ProjectileTuner(owner, entityType); o != nil {
 			t = t.overriddenBy(*o)
 		}
-	}
-	if t.Speed != nil {
-		scaleLaunch(opts, *t.Speed, entityType)
 	}
 	if t.Gravity != nil {
 		conf.Gravity = *t.Gravity

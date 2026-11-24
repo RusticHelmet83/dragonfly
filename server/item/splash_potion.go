@@ -22,7 +22,7 @@ func (s SplashPotion) MaxCount() int {
 // Use ...
 func (s SplashPotion) Use(tx *world.Tx, user User, ctx *UseContext) bool {
 	create := tx.World().EntityRegistry().Config().SplashPotion
-	opts := world.EntitySpawnOpts{Position: eyePosition(user), Velocity: throwableOffset(user.Rotation()).Vec3().Mul(0.5)}
+	opts := world.EntitySpawnOpts{Position: eyePosition(user), Velocity: throwableOffset(user.Rotation()).Vec3().Mul(throwSpeed(user, "minecraft:splash_potion", 0.5))}
 	tx.AddEntity(create(opts, s.Type, user))
 	tx.PlaySound(user.Position(), sound.ItemThrow{})
 

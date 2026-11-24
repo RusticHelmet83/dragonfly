@@ -46,11 +46,12 @@ func TestPrepareProjectile(t *testing.T) {
 		t.Fatalf("disabled: got %v, want %v", opts.Velocity, want)
 	}
 
-	// Speed applies to the throw only, gravity and drag may be set to 0.
+	// Speed is read by the thrower (see ThrowSpeedOf) and not applied here: the launch velocity only gets the motion
+	// of the thrower added. Gravity and drag may be set to 0.
 	SetProjectileTuning(typ, ProjectileTuning{Speed: Float(1), Gravity: Float(0), Drag: Float(0.5)})
 	opts, conf = launch()
 	PrepareProjectile(&opts, &conf, owner, typ)
-	if want := (mgl64.Vec3{1.2, 0, -0.1}); !opts.Velocity.ApproxEqual(want) {
+	if want := (mgl64.Vec3{2.2, 0, -0.1}); !opts.Velocity.ApproxEqual(want) {
 		t.Fatalf("speed: got %v, want %v", opts.Velocity, want)
 	}
 	if conf.Gravity != 0 || conf.Drag != 0.5 {
@@ -76,13 +77,26 @@ func TestPrepareProjectile(t *testing.T) {
 	t.Cleanup(func() { ProjectileTuner = nil })
 	opts, conf = launch()
 	PrepareProjectile(&opts, &conf, owner, typ)
-	if want := (mgl64.Vec3{3, 0, 0}); !opts.Velocity.ApproxEqual(want) {
+	if want := (mgl64.Vec3{2, 0, 0}); !opts.Velocity.ApproxEqual(want) {
 		t.Fatalf("tuner: got %v, want %v", opts.Velocity, want)
 	}
 	if conf.Gravity != 0.2 {
 		t.Fatalf("tuner kept global gravity: got %v", conf.Gravity)
 	}
+
+	// ThrowSpeedOf gives the speed the thrower launches at: the tuner wins over the global tuning, and if no speed
+	// is set at all there is none.
+	if s, ok := ThrowSpeedOf(owner, typ); !ok || s != 3 {
+		t.Fatalf("throw speed with tuner: got %v, %v, want 3, true", s, ok)
+	}
 	ProjectileTuner = nil
+	if s, ok := ThrowSpeedOf(owner, typ); !ok || s != 1 {
+		t.Fatalf("throw speed global: got %v, %v, want 1, true", s, ok)
+	}
+	SetProjectileTuning(typ, ProjectileTuning{})
+	if s, ok := ThrowSpeedOf(owner, typ); ok {
+		t.Fatalf("throw speed unset: got %v, want none", s)
+	}
 
 	// The fishing hook does not inherit by default.
 	ProjectileInheritMotion = nil
