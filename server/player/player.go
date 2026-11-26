@@ -4638,6 +4638,28 @@ func (p *Player) Disconnect(msg ...any) {
 	})
 }
 
+// DisconnectDetached disconnects the player without touching any world transaction, so it is safe to call from
+// any goroutine, including when the world that the player is in is frozen, deadlocked or closed. Disconnect and
+// Close both reach for the player's transaction, which is only valid on the world owner, and panic when it has
+// finished.
+//
+// The handler's HandleQuit is still called and the session is closed with a nil transaction, which removes the
+// player from the server (so they can reconnect) but skips world-bound teardown: the player data is not saved and
+// the entity is not removed from its world. That is expected to be handled by closing the world itself.
+// The player must not be used afterwards.
+func (p *Player) DisconnectDetached(msg ...any) {
+	p.once.Do(func() {
+		reason := format(msg)
+		p.h.HandleQuit(p)
+		p.h = NopHandler{}
+		if s := p.s; s != nil {
+			s.Disconnect(reason)
+			s.Close(nil, p)
+			s.CloseConnection()
+		}
+	})
+}
+
 // Close closes the player and removes it from the world.
 // Close disconnects the player with a 'Connection closed.' message. Disconnect should be used to disconnect a
 // player with a custom message.
