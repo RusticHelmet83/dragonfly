@@ -20,6 +20,15 @@ func TraverseBlocks(start, end mgl64.Vec3, f func(pos cube.Pos) (con bool)) {
 
 	step := signVec3(dir)
 	stepX, stepY, stepZ := int(step[0]), int(step[1]), int(step[2])
+
+	// Guard against NaN or zero direction vectors (e.g. from NaN velocity on
+	// a projectile). Without this, the DDA switch defaults to stepZ, which is
+	// 0, so b[2] never changes and max[2]+NaN stays NaN — causing an infinite
+	// loop that burns 100% of a CPU core inside the world transaction runner.
+	if stepX == 0 && stepY == 0 && stepZ == 0 {
+		return
+	}
+
 	max := boundaryVec3(start, dir)
 
 	delta := safeDivideVec3(step, dir)
