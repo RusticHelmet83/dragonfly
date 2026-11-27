@@ -1,7 +1,6 @@
 package world
 
 import (
-	"log/slog"
 	"time"
 
 	"github.com/df-mc/dragonfly/server/block/cube"
@@ -25,7 +24,6 @@ func (w weather) StartWeatherCycle() {
 // snowingAt checks if it is snowing at a specific cube.Pos in the World. True
 // is returned if the temperature in the Biome at that position is sufficiently
 // low, if it is raining and if it's above the top-most obstructing block.
-// SNOW-DEBUG: logging added to diagnose rain-vs-snow on the christmas lobby.
 func (tx *Tx) snowingAt(pos cube.Pos) bool {
 	w := tx.World()
 	if w == nil || !w.Dimension().WeatherCycle() {
@@ -36,25 +34,13 @@ func (tx *Tx) snowingAt(pos cube.Pos) bool {
 	w.set.Lock()
 	raining := w.set.Raining
 	w.set.Unlock()
-	result := raining && b.Rainfall() > 0 && temp <= 0.15 && tx.highestObstructingBlock(pos[0], pos[2]) < pos[1]
-	slog.Info("[SNOW-DEBUG] snowingAt",
-		"pos", pos,
-		"biome", b.String(),
-		"biomeID", b.EncodeBiome(),
-		"biomeTemp", b.Temperature(),
-		"adjustedTemp", temp,
-		"rainfall", b.Rainfall(),
-		"raining", raining,
-		"result", result,
-	)
-	return result
+	return raining && b.Rainfall() > 0 && temp <= 0.15 && tx.highestObstructingBlock(pos[0], pos[2]) < pos[1]
 }
 
 // rainingAt checks if it is raining at a specific cube.Pos in the World. True
 // is returned if it is raining, if the temperature is high enough in the biome
 // for it not to be snow and if the block is above the top-most obstructing
 // block.
-// SNOW-DEBUG: logging added to diagnose rain-vs-snow on the christmas lobby.
 func (tx *Tx) rainingAt(pos cube.Pos) bool {
 	w := tx.World()
 	if w == nil || !w.Dimension().WeatherCycle() {
@@ -65,18 +51,7 @@ func (tx *Tx) rainingAt(pos cube.Pos) bool {
 	w.set.Lock()
 	a := w.set.Raining
 	w.set.Unlock()
-	result := a && b.Rainfall() > 0 && temp > 0.15 && tx.highestObstructingBlock(pos[0], pos[2]) < pos[1]
-	slog.Info("[SNOW-DEBUG] rainingAt",
-		"pos", pos,
-		"biome", b.String(),
-		"biomeID", b.EncodeBiome(),
-		"biomeTemp", b.Temperature(),
-		"adjustedTemp", temp,
-		"rainfall", b.Rainfall(),
-		"raining", a,
-		"result", result,
-	)
-	return result
+	return a && b.Rainfall() > 0 && temp > 0.15 && tx.highestObstructingBlock(pos[0], pos[2]) < pos[1]
 }
 
 // thunderingAt checks if it is thundering at a specific cube.Pos in the World.

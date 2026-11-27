@@ -2,9 +2,6 @@ package session
 
 import (
 	"bytes"
-	"encoding/hex"
-	"fmt"
-	"log/slog"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/df-mc/dragonfly/server/block/cube"
@@ -15,47 +12,12 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
-// snowDebugLogChunk logs biome palette IDs and raw biome bytes for a chunk.
-// SNOW-DEBUG: remove this function and its call sites when done investigating.
-func snowDebugLogChunk(pos world.ChunkPos, c *chunk.Chunk) {
-	biomeBytes := chunk.EncodeBiomes(c, chunk.NetworkEncoding)
-
-	// Collect unique biome IDs directly from the chunk storage.
-	r := c.Range()
-	seen := map[uint32]struct{}{}
-	for y := int16(r[0]); y <= int16(r[1]); y++ {
-		for x := uint8(0); x < 16; x++ {
-			for z := uint8(0); z < 16; z++ {
-				seen[c.Biome(x, y, z)] = struct{}{}
-			}
-		}
-	}
-	ids := make([]uint32, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
-	}
-
-	preview := biomeBytes
-	if len(preview) > 48 {
-		preview = preview[:48]
-	}
-	slog.Info(fmt.Sprintf(
-		"[SNOW-DEBUG] chunk(%d,%d) biomeIDs=%v rawBiomesLen=%d first48hex=%s",
-		pos.X(), pos.Z(), ids, len(biomeBytes), hex.EncodeToString(preview),
-	))
-}
-
 // subChunkRequests is set to true to enable the sub-chunk request system. This can (likely) cause unexpected issues,
 // but also solves issues with block entities such as item frames and lecterns as of v1.19.10.
 const subChunkRequests = true
 
 // ViewChunk ...
 func (s *Session) ViewChunk(pos world.ChunkPos, dim world.Dimension, blockEntities map[cube.Pos]world.Block, c *chunk.Chunk) {
-	// SNOW-DEBUG: log biome IDs for chunks near lobby_christmas spawn (0.5, 63, -30.5)
-	// which sits in chunk (0, -2). Log a 5-chunk radius around that.
-	if pos.X() >= -2 && pos.X() <= 2 && pos.Z() >= -4 && pos.Z() <= 0 {
-		snowDebugLogChunk(pos, c)
-	}
 	if !s.conn.ClientCacheEnabled() {
 		s.sendNetworkChunk(pos, dim, c, blockEntities)
 		return

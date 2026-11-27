@@ -63,12 +63,10 @@ func BiomeDefinitions() ([]protocol.BiomeDefinition, []string) {
 			tagIndices[i] = uint16(intern(tag))
 		}
 
-		// Always send the actual biome ID so the client can resolve the chunk palette
-		// entry (e.g. ID 12 → ice_plains, temperature 0.0 → snow) correctly.
-		// Previously only custom biomes (id > maxVanillaBiomeID) had their ID set;
-		// vanilla biomes received -1, causing the client to fall back to a warm default
-		// and render rain instead of snow.
-		biomeID := int16(id)
+		var biomeID int16 = -1
+		if id > maxVanillaBiomeID {
+			biomeID = int16(id)
+		}
 
 		def := protocol.BiomeDefinition{
 			NameIndex:   int16(nameIndex),

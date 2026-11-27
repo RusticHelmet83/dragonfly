@@ -1500,15 +1500,6 @@ func (s *Session) ViewWeather(raining, thunder bool) {
 }
 
 func (s *Session) sendWeatherPackets(raining, thunder bool) {
-	// SNOW-DEBUG: log exactly what we're sending so we can verify the server
-	// is telling the client "start raining" (not "start snowing" — Bedrock has
-	// no snow weather event; it decides rain vs snow purely from biome data).
-	s.conf.Log.Info("[SNOW-DEBUG] sendWeatherPackets",
-		"player", s.conn.IdentityData().DisplayName,
-		"raining", raining,
-		"thunder", thunder,
-	)
-
 	pk := &packet.LevelEvent{
 		EventType: packet.LevelEventStopRaining,
 	}
