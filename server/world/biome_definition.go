@@ -34,15 +34,12 @@ func BiomeDefinitions() ([]protocol.BiomeDefinition, []string) {
 	)
 
 	intern := func(s string) int {
-		// Bedrock clients look up biome definitions using namespaced keys ("minecraft:ice_plains").
-		// Prepend the namespace so the string dictionary matches what vanilla BDS sends.
-		ns := "minecraft:" + s
-		if index, exists := internedStringIndex[ns]; exists {
+		if index, exists := internedStringIndex[s]; exists {
 			return index
 		}
 		index := len(internedStrings)
-		internedStrings = append(internedStrings, ns)
-		internedStringIndex[ns] = index
+		internedStrings = append(internedStrings, s)
+		internedStringIndex[s] = index
 		return index
 	}
 
