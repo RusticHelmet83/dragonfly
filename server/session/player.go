@@ -104,6 +104,20 @@ func (s *Session) SendPlayerSpawn(pos mgl64.Vec3) {
 // sendBiomes sends all the vanilla biomes to the session.
 func (s *Session) sendBiomes() {
 	definitions, stringList := world.BiomeDefinitions()
+	for _, def := range definitions {
+		name := stringList[def.NameIndex]
+		if name == "ice_plains" || name == "snowy_plains" || name == "plains" {
+			s.conf.Log.Info("[SNOW-DEBUG] BiomeDefinitionList entry",
+				"name", name,
+				"nameIndex", def.NameIndex,
+				"biomeID", def.BiomeID,
+				"temperature", def.Temperature,
+				"downfall", def.Downfall,
+				"foliageSnow", def.FoliageSnow,
+				"rain", def.Rain,
+			)
+		}
+	}
 	s.writePacket(&packet.BiomeDefinitionList{
 		BiomeDefinitions: definitions,
 		StringList:       stringList,
