@@ -106,7 +106,7 @@ func (s *Session) sendBiomes() {
 	definitions, stringList := world.BiomeDefinitions()
 	for _, def := range definitions {
 		name := stringList[def.NameIndex]
-		if name == "ice_plains" || name == "snowy_plains" || name == "plains" {
+		if name == "minecraft:ice_plains" || name == "minecraft:snowy_plains" || name == "minecraft:plains" {
 			s.conf.Log.Info("[SNOW-DEBUG] BiomeDefinitionList entry",
 				"name", name,
 				"nameIndex", def.NameIndex,

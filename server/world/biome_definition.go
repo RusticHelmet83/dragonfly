@@ -34,12 +34,15 @@ func BiomeDefinitions() ([]protocol.BiomeDefinition, []string) {
 	)
 
 	intern := func(s string) int {
-		if index, exists := internedStringIndex[s]; exists {
+		// Bedrock clients look up biome definitions using namespaced keys ("minecraft:ice_plains").
+		// Prepend the namespace so the string dictionary matches what vanilla BDS sends.
+		ns := "minecraft:" + s
+		if index, exists := internedStringIndex[ns]; exists {
 			return index
 		}
 		index := len(internedStrings)
-		internedStrings = append(internedStrings, s)
-		internedStringIndex[s] = index
+		internedStrings = append(internedStrings, ns)
+		internedStringIndex[ns] = index
 		return index
 	}
 
@@ -63,10 +66,12 @@ func BiomeDefinitions() ([]protocol.BiomeDefinition, []string) {
 			tagIndices[i] = uint16(intern(tag))
 		}
 
-		var biomeID int16 = -1
-		if id > maxVanillaBiomeID {
-			biomeID = int16(id)
-		}
+		// Always send the actual biome ID so the client can resolve the chunk palette
+		// entry (e.g. ID 12 → ice_plains, temperature 0.0 → snow) correctly.
+		// Previously only custom biomes (id > maxVanillaBiomeID) had their ID set;
+		// vanilla biomes received -1, causing the client to fall back to a warm default
+		// and render rain instead of snow.
+		biomeID := int16(id)
 
 		def := protocol.BiomeDefinition{
 			NameIndex:   int16(nameIndex),
