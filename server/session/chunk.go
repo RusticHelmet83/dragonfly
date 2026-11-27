@@ -153,7 +153,6 @@ func (s *Session) sendBlobHashes(pos world.ChunkPos, dim world.Dimension, c *chu
 				BlobHashes:    []uint64{hash},
 				RawPayload:    []byte{0},
 				CacheEnabled:  true,
-				ClientBiomeUpdate: true,
 			})
 			return
 		}
@@ -201,7 +200,6 @@ func (s *Session) sendBlobHashes(pos world.ChunkPos, dim world.Dimension, c *chu
 		CacheEnabled:  true,
 		BlobHashes:    hashes,
 		RawPayload:    raw.Bytes(),
-		ClientBiomeUpdate: true,
 	})
 }
 
@@ -214,7 +212,6 @@ func (s *Session) sendNetworkChunk(pos world.ChunkPos, dim world.Dimension, c *c
 			Position:      protocol.ChunkPos(pos),
 			SubChunkLimit: protocol.Option(int32(c.HighestFilledSubChunk())),
 			RawPayload:    append(chunk.EncodeBiomes(c, chunk.NetworkEncoding), 0),
-			ClientBiomeUpdate: true,
 		})
 		return
 	}
@@ -243,7 +240,6 @@ func (s *Session) sendNetworkChunk(pos world.ChunkPos, dim world.Dimension, c *c
 		Position:      protocol.ChunkPos{pos.X(), pos.Z()},
 		SubChunkCount: uint32(len(data.SubChunks)),
 		RawPayload:    append([]byte(nil), chunkBuf.Bytes()...),
-		ClientBiomeUpdate: true,
 	})
 }
 
